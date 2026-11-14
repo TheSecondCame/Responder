@@ -1,0 +1,96 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="头文件\pages">
+      <UniqueIdentifier>{f2cff1a2-657e-47c2-bfad-ece11c24a77e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\pages">
+      <UniqueIdentifier>{2603d9bd-0839-415f-b8ac-ff109163102a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\database">
+      <UniqueIdentifier>{5e7c86b9-232c-46f1-8287-321e82bef00c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\httpd">
+      <UniqueIdentifier>{90672c7d-738b-4f44-8530-466ee89fc57c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\httpd">
+      <UniqueIdentifier>{27a16b09-f6c6-44f1-a437-8bfc96bd008b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\database">
+      <UniqueIdentifier>{ff5c2f15-3695-4460-b708-888c72579aa9}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Server.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="main_pages.cpp">
+      <Filter>源文件\pages</Filter>
+    </ClCompile>
+    <ClCompile Include="encoding.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="responder_request.cpp">
+      <Filter>源文件\httpd</Filter>
+    </ClCompile>
+    <ClCompile Include="responder_template.cpp">
+      <Filter>源文件\httpd</Filter>
+    </ClCompile>
+    <ClCompile Include="responder_problem.cpp">
+      <Filter>源文件\database</Filter>
+    </ClCompile>
+    <ClCompile Include="competition_pages.cpp">
+      <Filter>源文件\pages</Filter>
+    </ClCompile>
+    <ClCompile Include="responder_competition.cpp">
+      <Filter>源文件\database</Filter>
+    </ClCompile>
+    <ClCompile Include="functions.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="responder_pages.h">
+      <Filter>头文件\pages</Filter>
+    </ClInclude>
+    <ClInclude Include="encoding.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="httplib.h">
+      <Filter>头文件\httpd</Filter>
+    </ClInclude>
+    <ClInclude Include="responder_request.h">
+      <Filter>头文件\httpd</Filter>
+    </ClInclude>
+    <ClInclude Include="responder_template.h">
+      <Filter>头文件\httpd</Filter>
+    </ClInclude>
+    <ClInclude Include="json.hpp">
+      <Filter>头文件\database</Filter>
+    </ClInclude>
+    <ClInclude Include="responder_problem.h">
+      <Filter>头文件\database</Filter>
+    </ClInclude>
+    <ClInclude Include="responder_competition.h">
+      <Filter>头文件\database</Filter>
+    </ClInclude>
+    <ClInclude Include="build.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="functions.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

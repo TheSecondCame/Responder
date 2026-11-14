@@ -1,0 +1,12 @@
+#pragma once
+#define IDD_QUESTION 3100
+#define QE_TYPE 3101
+#define QE_LEVEL 3102
+#define QE_STEM 3103
+#define QE_EXTRA_LABEL 3104
+#define QE_LINE1 3110
+#define QE_LINE2 3111
+#define QE_LINE3 3112
+#define QE_LINE4 3113
+#define QE_ANSWER 3120
+#define QE_FEEDBACK 3121
