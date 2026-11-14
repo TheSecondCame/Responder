@@ -1,4 +1,4 @@
-# Responder by STA —— 开发者交接文档
+# Responder by STA
 
 | 项目 | 内容 |
 |---|---|
