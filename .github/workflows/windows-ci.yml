@@ -82,7 +82,8 @@ jobs:
             .\Server\functions.cpp `
             .\Server\logging.cpp `
             /Fo.\build_tests\ `
-            /Fe.\build_tests\regression_tests.exe
+            /Fe.\build_tests\regression_tests.exe `
+            /link user32.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\build_tests\regression_tests.exe
 
