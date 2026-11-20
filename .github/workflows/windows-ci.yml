@@ -44,18 +44,31 @@ jobs:
               $k = $Matches[1]
               $v = $Matches[2]
               if ($k -ieq 'PATH') {
-                $v.Split(';') | Where-Object { $_ } | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+                $paths = @($v.Split(';') | Where-Object { $_ })
+                [array]::Reverse($paths)
+                $paths | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
               } elseif (-not $before.ContainsKey($k) -or $before[$k] -ne $v) {
                 "$k=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
               }
             }
           }
+          $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\amd64\MSBuild.exe"
+          if (-not (Test-Path $msbuild)) {
+            throw "MSBuild.exe not found at $msbuild"
+          }
+          "MSBUILD_EXE=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build Debug|x64
-        run: msbuild "Responder by STA.slnx" /p:Configuration=Debug /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+        shell: pwsh
+        run: |
+          & $env:MSBUILD_EXE "Responder by STA.slnx" /p:Configuration=Debug /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Release|x64
-        run: msbuild "Responder by STA.slnx" /p:Configuration=Release /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+        shell: pwsh
+        run: |
+          & $env:MSBUILD_EXE "Responder by STA.slnx" /p:Configuration=Release /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build and run C++ regression tests
         shell: pwsh
