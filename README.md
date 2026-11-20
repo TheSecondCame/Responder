@@ -13,7 +13,7 @@
 
 - `Server\build_updater.exe` 是**编译期预构建工具**（编译时把 `build.h` 版本号 +1），
   必须存在才能编译，但不参与运行。
-- 程序为控制台子系统：图形模式下自行隐藏控制台窗口；`--console` 模式保留它。
+- 程序为 Windows 桌面子系统：图形模式下不创建控制台窗口；`--console` 模式会优先附着父控制台（无父控制台时新建控制台窗口）并同步输出运行日志。
 - 产物默认动态链接 VC++ 运行库：**目标机若没装过 Visual Studio，需先安装
   Microsoft Visual C++ 2015-2022 Redistributable (x64)**，否则会提示缺少
   `MSVCP140.dll` / `VCRUNTIME140.dll`。

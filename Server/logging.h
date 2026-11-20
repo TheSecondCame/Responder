@@ -13,8 +13,9 @@
 
 namespace logging
 {
-	// 追加一行日志（线程安全）。会自动写入 server.log 并保留给 GUI 读取。
-	void append(const std::string& line);
+	// 追加一行日志（线程安全）。会自动写入 server.log 并保留给 GUI 读取；
+	// 在控制台模式下同步回写 stdout/stderr。
+	void append(const std::string& line, bool to_stderr = false);
 
 	// 取走自上次调用以来新增的日志行（线程安全）。
 	std::vector<std::string> drain();
@@ -25,9 +26,9 @@ namespace logging
 	// 清空日志缓存（不删除日志文件）。
 	void clear();
 
-	// 把标准输出/标准错误重定向到日志，并把控制台窗口隐藏。
-	// 这样原有的 std::cout 输出会同时进入 GUI 日志与 server.log，
-	// 无需改动已有的 66 处输出语句。
+	// 把标准输出/标准错误重定向到日志；
+	// hide_console 非 0 时隐藏控制台窗口（Windows 子系统下自然无操作），
+	// 为 0 时（--console 模式）将日志同步回写控制台。
 	void setup(int hide_console);
 }
 
@@ -43,37 +44,45 @@ protected:
 	{
 		if (ch == traits_type::eof())
 			return traits_type::not_eof(ch);
-		char c = (char)ch;
-		if (c == '\n')
-		{
-			logging::append(buffer_);
-			buffer_.clear();
-		}
-		else if (c != '\r')
-		{
-			buffer_ += c;
-		}
+		std::lock_guard<std::mutex> lock(mutex_);
+		push_char((char)ch);
 		return ch;
 	}
 
 	std::streamsize xsputn(const char* s, std::streamsize n) override
 	{
+		std::lock_guard<std::mutex> lock(mutex_);
 		for (std::streamsize i = 0; i < n; ++i)
-			overflow((unsigned char)s[i]);
+			push_char(s[i]);
 		return n;
 	}
 
 	int sync() override
 	{
+		std::lock_guard<std::mutex> lock(mutex_);
 		if (!buffer_.empty())
 		{
-			logging::append(buffer_);
+			logging::append(buffer_, to_stderr_);
 			buffer_.clear();
 		}
 		return 0;
 	}
 
 private:
+	void push_char(char c)
+	{
+		if (c == '\n')
+		{
+			logging::append(buffer_, to_stderr_);
+			buffer_.clear();
+		}
+		else if (c != '\r')
+		{
+			buffer_ += c;
+		}
+	}
+
+	std::mutex mutex_;
 	std::string buffer_;
 	bool to_stderr_;
 };
