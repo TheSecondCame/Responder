@@ -1003,7 +1003,7 @@ void competition_display_page::generate_page()
             <div class="quiz-header">
               <h3>题目</h3>
               <div class="d-flex flex-wrap align-items-center gap-1">
-                <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem()" id="reshowproblem" disabled>重新显示上一题</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem() " id="reshowproblem" disabled>重新显示上一题</button>
                 <button class="btn btn-primary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>下一信息</button>
                 <button class="btn btn-danger btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>显示答案</button>
 
