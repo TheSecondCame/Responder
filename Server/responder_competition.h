@@ -11,6 +11,7 @@
 #include <iostream>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include "json.hpp"
@@ -19,6 +20,7 @@
 using json = nlohmann::json;
 
 inline std::mutex competition_session_mutex;
+std::shared_ptr<std::mutex> get_competition_mutex(const std::string& guid);
 
 std::vector<std::string> load_competition_list(std::string filename); // return guid list
 void save_competition_list(std::string filename, const std::vector<std::string>& guid_list);

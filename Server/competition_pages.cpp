@@ -621,6 +621,9 @@ std::string competition_delete_handler::generate_response()
         return "";
     }
 
+    auto comp_mutex = get_competition_mutex(params["guid"]);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
     competition c;
     c.load(params["guid"]);
 
@@ -909,25 +912,31 @@ void competition_display_page::generate_page()
     }
 
     competition c;
-    c.load(params["guid"]);
-
-    if (c.teams.size() == 0)
+    competition_session session;
+    bool has_session = false;
+    std::string initial_problem_html;
     {
-        // error: TODO
-        return;
+        std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
+        auto comp_mutex = get_competition_mutex(params["guid"]);
+        std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+        c.load(params["guid"]);
+
+        if (c.teams.size() == 0)
+        {
+            // error: TODO
+            return;
+        }
+
+        c.competition_status = competition::ONGOING;
+        c.save();
+
+        has_session = session.load(c.guid, c.teams.size());
+        if (has_session && session.current_id > 0 && session.current_type >= 0 && session.current_type <= 2)
+        {
+            lookup_and_render_problem(session.current_type, session.current_id, initial_problem_html);
+        }
     }
-
-	c.competition_status = competition::ONGOING;
-	c.save();
-
-	competition_session session;
-	bool has_session = session.load(c.guid, c.teams.size());
-	std::string initial_problem_html;
-	if (has_session && session.current_id > 0 && session.current_type >= 0 && session.current_type <= 2)
-	{
-		std::lock_guard bank_lock(problem_bank_mutex);
-		lookup_and_render_problem(session.current_type, session.current_id, initial_problem_html);
-	}
 	std::int64_t server_now = static_cast<std::int64_t>(std::time(nullptr));
 
     content = R"(
@@ -1343,6 +1352,9 @@ std::string competition_display_scores_handler::generate_response()
         return "fail : guid not found";
     }
 
+    auto comp_mutex = get_competition_mutex(params["guid"]);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
     competition c;
     c.load(params["guid"]);
 
@@ -1365,7 +1377,15 @@ std::string competition_display_scores_handler::generate_response()
         return "fail : team or score not found";
     }
 
-	c.team_scores[std::stoi(params["team"])] = std::stoi(params["score"]);
+    int team_idx = -1;
+    int new_score = 0;
+    if (!try_parse_int(params["team"], team_idx) || team_idx < 0 || static_cast<size_t>(team_idx) >= c.team_scores.size()
+        || !try_parse_int(params["score"], new_score))
+    {
+        return "fail : invalid team or score";
+    }
+
+	c.team_scores[team_idx] = new_score;
 
 	std::ofstream fout("data/competitions/" + c.guid + "/scores.json");
 
@@ -1390,12 +1410,15 @@ void competition_display_problem_handler::init()
 }
 std::string competition_display_problem_handler::generate_response()
 {
-	std::lock_guard bank_lock(problem_bank_mutex);
+	std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
     if (params.find("guid") == params.end())
     {
         // error: TODO
         return "fail : guid not found";
     }
+
+    auto comp_mutex = get_competition_mutex(params["guid"]);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
     c.load(params["guid"]);
@@ -1443,14 +1466,32 @@ std::string competition_display_problem_handler::generate_response()
         if (!lookup_and_render_problem(target_type, target_id, reshow_html))
             return "fail : no previous problem";
 
-        competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
-            s.current_type = target_type;
-            s.current_id = target_id;
+        bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
+            bool switching_problem = (s.current_type != target_type || s.current_id != target_id);
+            if (params.find("state") != params.end())
+            {
+                json client_state = json::parse(params["state"], nullptr, false);
+                if (client_state.is_object())
+                    s.apply_client_state(client_state, c.teams.size());
+            }
+            if (switching_problem)
+            {
+                s.current_type = target_type;
+                s.current_id = target_id;
+                s.shown_at = static_cast<std::int64_t>(std::time(nullptr));
+                s.info_id = 0;
+                s.show_answer = false;
+                s.discarded = false;
+                s.confirm_pending = false;
+            }
             if (s.shown_at <= 0)
                 s.shown_at = static_cast<std::int64_t>(std::time(nullptr));
             if (s.problem_number <= 0)
                 s.problem_number = 1;
         });
+
+        if (!saved)
+            return "fail : session_save_failed|" + std::to_string(target_type) + "|" + std::to_string(target_id);
 
         return reshow_html;
     }
@@ -1662,7 +1703,7 @@ std::string competition_display_problem_handler::generate_response()
     c.last_problem_id = total_id;
     c.save();
 
-    competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
+    bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
         bool has_client_state = false;
         if (params.find("state") != params.end())
         {
@@ -1687,6 +1728,9 @@ std::string competition_display_problem_handler::generate_response()
         s.confirm_pending = false;
     });
 
+    if (!saved)
+        return "fail : session_save_failed|" + std::to_string(req_type) + "|" + std::to_string(total_id);
+
     return render_problem_html(req_type, total_id, p_content, p_info, p_ans);
 }
 
@@ -1700,6 +1744,9 @@ std::string competition_display_session_handler::generate_response()
 {
     if (params.find("guid") == params.end())
         return "fail : guid not found";
+
+    auto comp_mutex = get_competition_mutex(params["guid"]);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
     c.load(params["guid"]);
@@ -1768,6 +1815,9 @@ std::string competition_enddisplay_handler::generate_response()
         return "fail : guid not found";
     }
 
+    auto comp_mutex = get_competition_mutex(params["guid"]);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
     competition c;
     c.load(params["guid"]);
 
@@ -1790,7 +1840,7 @@ std::string competition_enddisplay_handler::generate_response()
     }
 
     int action_val = -1;
-    if (!try_parse_int(params["action"], action_val))
+    if (!try_parse_int(params["action"], action_val) || (action_val != 0 && action_val != 1))
         return "fail : invalid action";
 
     switch (action_val)

@@ -263,28 +263,104 @@ try {
         throw "Reshow consumed additional problem! used=$usedAfterReshow"
     }
 
-    # Pause clears session.json while preserving last_problem_id for reshow
     $sessionFilePath = Join-Path $staging "data\competitions\$compGuid\session.json"
     if (-not (Test-Path $sessionFilePath)) {
         throw "Expected session.json to exist before pause"
     }
+
+    # Simulate session.json write failure (e.g. read-only / locked file) during draw of Q2:
+    # must surface failure visibly, keep previous session intact, and allow same-question retry without consuming a new problem
+    $sessionItem = Get-Item $sessionFilePath
+    $sessionItem.IsReadOnly = $true
+    try {
+        $rDrawFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+        if ($rDrawFail.Content.Trim() -notmatch '^fail : session_save_failed\|0\|(\d+)$') {
+            throw "Expected fail : session_save_failed|0|<id> on read-only session.json, got: $($rDrawFail.Content)"
+        }
+        $failedQ2Id = [int]$Matches[1]
+        if ($failedQ2Id -eq $drawnId) {
+            throw "Expected Q2 draw to pick a different problem from Q1 ($drawnId)"
+        }
+        $sessionAfterFail = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($sessionAfterFail.current_id -ne $drawnId) {
+            throw "session.json should still hold Q1 ($drawnId) after failed Q2 write, got $($sessionAfterFail.current_id)"
+        }
+        $rReshowWhileFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+        if ($rReshowWhileFail.Content.Trim() -ne "fail : session_save_failed|0|$failedQ2Id") {
+            throw "Expected reshow while read-only to return fail : session_save_failed|0|$failedQ2Id, got: $($rReshowWhileFail.Content)"
+        }
+    } finally {
+        $sessionItem.IsReadOnly = $false
+    }
+
+    # Retry same question via reshow=1 after write access is restored; must not consume another problem
+    $rReshowRetryQ2 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rReshowRetryQ2.StatusCode -ne 200 -or $rReshowRetryQ2.Content -notmatch "data-id=`"$failedQ2Id`"") {
+        throw "Retry reshow failed to return Q2 ($failedQ2Id)"
+    }
+    $sessionAfterRetry = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($sessionAfterRetry.current_id -ne $failedQ2Id) {
+        throw "Expected session.json current_id=$failedQ2Id after retry, got $($sessionAfterRetry.current_id)"
+    }
+    $usedAfterQ2Retry = Get-UsedChoiceCount $problemListPath
+    if ($usedAfterQ2Retry -ne 2) {
+        throw "Expected 2 used choice problems after Q2 retry, got $usedAfterQ2Retry"
+    }
+
+    # Pause clears session.json while preserving last_problem_id ($failedQ2Id) for reshow
     $rPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=0" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
     if ($rPause.Content.Trim() -ne "success" -or (Test-Path $sessionFilePath)) {
         throw "Pause did not succeed or did not clear session.json"
     }
 
+    # Delayed session sync arriving after pause must be rejected and must NOT recreate session.json
+    $rDelayedSyncPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/session" -Method Post -Headers $headers -Body "guid=$compGuid&timer_action=start&timer_duration=15&timer_mode=0" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rDelayedSyncPause.Content.Trim() -ne "fail : competition isn't ongoing" -or (Test-Path $sessionFilePath)) {
+        throw "Delayed sync after pause was not rejected or recreated session.json: $($rDelayedSyncPause.Content)"
+    }
+
     $rDisplayResume = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
-    if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $drawnId;") {
+    if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $failedQ2Id;") {
         throw "Resumed display page state unexpected after pause"
     }
     $rReshowAfterPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
-    if ($rReshowAfterPause.Content -notmatch "data-id=`"$drawnId`"") {
+    if ($rReshowAfterPause.Content -notmatch "data-id=`"$failedQ2Id`"") {
         throw "Reshow after pause failed"
     }
 
-    $rFinish = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
-    if ($rFinish.Content.Trim() -ne "success" -or (Test-Path $sessionFilePath)) {
-        throw "Finish did not succeed or did not clear session.json"
+    # Concurrent session sync burst racing with finish (action=1) must leave session.json absent
+    $raceHandler = New-Object System.Net.Http.HttpClientHandler
+    $raceHandler.UseCookies = $false
+    $raceClient = New-Object System.Net.Http.HttpClient($raceHandler)
+    try {
+        $raceClient.DefaultRequestHeaders.Add("Cookie", "token=$token")
+        $raceTasks = New-Object System.Collections.Generic.List[System.Threading.Tasks.Task[System.Net.Http.HttpResponseMessage]]
+        for ($k = 0; $k -lt 10; $k++) {
+            $syncContent = New-Object System.Net.Http.StringContent("guid=$compGuid&timer_action=start&timer_duration=15&timer_mode=0", [System.Text.Encoding]::UTF8, "application/x-www-form-urlencoded")
+            $raceTasks.Add($raceClient.PostAsync("$baseUrl/main/competition/display/session", $syncContent))
+            if ($k -eq 3) {
+                $finContent = New-Object System.Net.Http.StringContent("", [System.Text.Encoding]::UTF8, "application/x-www-form-urlencoded")
+                $finishTask = $raceClient.PostAsync("$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=1", $finContent)
+                $raceTasks.Add($finishTask)
+            }
+        }
+        [System.Threading.Tasks.Task]::WaitAll($raceTasks.ToArray())
+        $finishBody = $finishTask.Result.Content.ReadAsStringAsync().GetAwaiter().GetResult().Trim()
+        if ($finishBody -ne "success") {
+            throw "Concurrent finish did not succeed: $finishBody"
+        }
+    } finally {
+        $raceClient.Dispose()
+    }
+
+    $compJsonPath = Join-Path $staging "data\competitions\$compGuid\competition.json"
+    $compAfterFinish = Get-Content $compJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($compAfterFinish.competition_status -ne 3 -or (Test-Path $sessionFilePath)) {
+        throw "Finish did not persist FINISHED status or left session.json behind"
+    }
+    $rDelayedSyncFinish = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/session" -Method Post -Headers $headers -Body "guid=$compGuid&timer_action=start&timer_duration=15&timer_mode=0" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rDelayedSyncFinish.Content.Trim() -ne "fail : competition isn't ongoing" -or (Test-Path $sessionFilePath)) {
+        throw "Delayed sync after finish was not rejected or recreated session.json: $($rDelayedSyncFinish.Content)"
     }
 
     $finalLog = Get-Content $logPath -Raw -Encoding UTF8

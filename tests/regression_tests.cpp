@@ -1,10 +1,12 @@
 #include <Windows.h>
+#include <atomic>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "responder_problem.h"
@@ -225,6 +227,129 @@ static void TestCompetitionSessionLifecycle(const fs::path& workdir)
     assert(!after_clear.load(c.guid, c.teams.size()));
 }
 
+static void TestSessionWriteFailurePreservesPreviousAndRetries(const fs::path& workdir)
+{
+    fs::create_directories(workdir / "data" / "competitions");
+    competition c;
+    c.guid = "test-write-fail-guid";
+    c.name = "Write Fail Test";
+    c.description = "Regression";
+    c.teams = { { "Alpha", 'A' }, { "Beta", 'B' } };
+    c.team_scores = { 0, 0 };
+    c.competition_status = competition::ONGOING;
+    c.choice_count = 5;
+    c.save();
+
+    assert(competition_session::update(c.guid, c.teams.size(), [](competition_session& s, bool) {
+        s.current_type = 0;
+        s.current_id = 1;
+        s.shown_at = 1000;
+    }));
+
+    fs::path session_path = workdir / "data" / "competitions" / c.guid / "session.json";
+    fs::path tmp_path = workdir / "data" / "competitions" / c.guid / "session.json.tmp";
+    assert(fs::exists(session_path));
+
+    // Mark session.json read-only to force atomic MoveFileExA replacement to fail
+    assert(SetFileAttributesA(session_path.string().c_str(), FILE_ATTRIBUTE_READONLY));
+    bool second_saved = competition_session::update(c.guid, c.teams.size(), [](competition_session& s, bool) {
+        s.current_type = 0;
+        s.current_id = 2;
+        s.shown_at = 2000;
+    });
+    assert(!second_saved);
+    assert(!fs::exists(tmp_path));
+
+    // Previous session (Q1) must still be intact on disk
+    competition_session still_q1;
+    assert(still_q1.load(c.guid, c.teams.size()));
+    assert(still_q1.current_id == 1);
+
+    // Restore write permission and retry the same question update without losing state
+    assert(SetFileAttributesA(session_path.string().c_str(), FILE_ATTRIBUTE_NORMAL));
+    assert(competition_session::update(c.guid, c.teams.size(), [](competition_session& s, bool) {
+        s.current_type = 0;
+        s.current_id = 2;
+        s.shown_at = 2001;
+    }));
+
+    competition_session after_retry;
+    assert(after_retry.load(c.guid, c.teams.size()));
+    assert(after_retry.current_id == 2);
+
+    competition_session::clear(c.guid);
+}
+
+static void TestPauseFinishSyncRace(const fs::path& workdir)
+{
+    fs::create_directories(workdir / "data" / "competitions");
+    const std::string guid = "test-race-guid";
+
+    for (int iter = 0; iter < 50; ++iter) {
+        competition init_c;
+        init_c.guid = guid;
+        init_c.name = "Race Test";
+        init_c.description = "Regression";
+        init_c.teams = { { "Alpha", 'A' }, { "Beta", 'B' } };
+        init_c.team_scores = { 0, 0 };
+        init_c.competition_status = competition::ONGOING;
+        init_c.save();
+        competition_session::clear(guid);
+
+        std::atomic<bool> start{ false };
+        auto target_status = (iter % 2 == 0) ? competition::PAUSED : competition::FINISHED;
+
+        std::thread sync_thread([&]() {
+            while (!start.load(std::memory_order_acquire)) {}
+            for (int k = 0; k < 5; ++k) {
+                auto comp_mtx = get_competition_mutex(guid);
+                std::lock_guard<std::mutex> lock(*comp_mtx);
+                competition c;
+                c.load(guid);
+                if (c.competition_status != competition::ONGOING) {
+                    break;
+                }
+                assert(competition_session::update(guid, c.teams.size(), [](competition_session& s, bool) {
+                    s.current_type = 0;
+                    s.current_id = 1;
+                    s.timer_started_at = 12345;
+                }));
+            }
+        });
+
+        std::thread end_thread([&]() {
+            while (!start.load(std::memory_order_acquire)) {}
+            auto comp_mtx = get_competition_mutex(guid);
+            std::lock_guard<std::mutex> lock(*comp_mtx);
+            competition c;
+            c.load(guid);
+            c.competition_status = target_status;
+            competition_session::clear(guid);
+            c.save();
+        });
+
+        start.store(true, std::memory_order_release);
+        sync_thread.join();
+        end_thread.join();
+
+        competition final_c;
+        final_c.load(guid);
+        assert(final_c.competition_status == target_status);
+        fs::path session_path = workdir / "data" / "competitions" / guid / "session.json";
+        assert(!fs::exists(session_path));
+
+        // Post-pause/finish delayed sync under per-competition lock must observe non-ONGOING and leave session absent
+        {
+            auto comp_mtx = get_competition_mutex(guid);
+            std::lock_guard<std::mutex> lock(*comp_mtx);
+            competition delayed_c;
+            delayed_c.load(guid);
+            assert(delayed_c.competition_status != competition::ONGOING);
+        }
+        assert(!fs::exists(session_path));
+    }
+}
+
 static void TestLogging()
 {
     std::streambuf* orig_cout = std::cout.rdbuf();
@@ -262,6 +387,8 @@ int main()
     TestProblemListLifecycle(temp_dir);
     TestDeleteDuplicatesPreservesUsed();
     TestCompetitionSessionLifecycle(temp_dir);
+    TestSessionWriteFailurePreservesPreviousAndRetries(temp_dir);
+    TestPauseFinishSyncRace(temp_dir);
     TestLogging();
 
     fs::current_path(orig_cwd);

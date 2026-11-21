@@ -8,11 +8,15 @@
 #include <Windows.h>
 #include <objbase.h>
 #include <algorithm>
+#include <unordered_map>
 
 #pragma comment(lib, "ole32.lib")
 
 namespace
 {
+	std::mutex g_comp_mutex_map_lock;
+	std::unordered_map<std::string, std::shared_ptr<std::mutex>> g_comp_mutexes;
+
 	std::string session_file_path(const std::string& guid)
 	{
 		return "data/competitions/" + guid + "/session.json";
@@ -359,6 +363,15 @@ void competition_session::clear(const std::string& guid)
 	DeleteFileA((session_file_path(guid) + ".tmp").c_str());
 }
 
+std::shared_ptr<std::mutex> get_competition_mutex(const std::string& guid)
+{
+	std::lock_guard<std::mutex> map_lock(g_comp_mutex_map_lock);
+	auto& ptr = g_comp_mutexes[guid];
+	if (!ptr)
+		ptr = std::make_shared<std::mutex>();
+	return ptr;
+}
+
 std::vector<std::string> load_competition_list(std::string filename)
 {
 	std::ifstream fin(filename);
@@ -451,6 +464,8 @@ void competition::save()
 	if (guid == "")
 		return;
 
+	CreateDirectoryA("data", NULL);
+	CreateDirectoryA("data/competitions", NULL);
 	CreateDirectoryA(("data/competitions/" + guid + "/").c_str(), NULL);
 
 	json jsbuf;
@@ -469,9 +484,23 @@ void competition::save()
 
 	problems.save("data/competitions/" + guid + "/problems.json");
 
-	std::ofstream fout("data/competitions/" + guid + "/competition.json");
-	fout << jsbuf.dump();
-	fout.close();
+	const std::string dst = "data/competitions/" + guid + "/competition.json";
+	const std::string tmp = dst + ".tmp";
+	try
+	{
+		std::ofstream fout;
+		fout.exceptions(std::ios::badbit | std::ios::failbit);
+		fout.open(tmp, std::ios::binary | std::ios::trunc);
+		fout << jsbuf.dump();
+		fout.close();
+
+		if (!MoveFileExA(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+			DeleteFileA(tmp.c_str());
+	}
+	catch (...)
+	{
+		DeleteFileA(tmp.c_str());
+	}
 }
 
 std::string competition::generate_guid()

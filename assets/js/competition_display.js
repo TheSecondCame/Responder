@@ -1017,6 +1017,8 @@ var ProblemID = 0, InfoID = 0, DefaultType = 0;
 var CurrentProblemType = -1;
 var LastProblemType = (typeof last_problem_type !== 'undefined') ? last_problem_type : -1;
 var LastProblemID = (typeof last_problem_id !== 'undefined') ? last_problem_id : 0;
+var CurrentProblemID = 0;
+var pendingUnsavedDraw = false;
 var IsDiscarded = 0;
 var IsShowAnswer = 1;
 
@@ -1025,6 +1027,22 @@ function updateReshowButton() {
     if (btn) {
         btn.disabled = !(LastProblemID > 0 && LastProblemType >= 0 && LastProblemType <= 2);
     }
+}
+
+function parseSessionSaveFailure(res) {
+    var prefix = "fail : session_save_failed|";
+    if (typeof res !== 'string' || res.indexOf(prefix) !== 0) {
+        return false;
+    }
+    var parts = res.substring(prefix.length).split("|");
+    var failedType = parseInt(parts[0], 10);
+    var failedId = parseInt(parts[1], 10);
+    if (!isNaN(failedType) && failedType >= 0 && failedType <= 2 && !isNaN(failedId) && failedId > 0) {
+        LastProblemType = failedType;
+        LastProblemID = failedId;
+        updateReshowButton();
+    }
+    return true;
 }
 
 function applyRenderedProblem(html, type, opts) {
@@ -1045,6 +1063,7 @@ function applyRenderedProblem(html, type, opts) {
         }
         if (!isNaN(metaId) && metaId > 0) {
             LastProblemID = metaId;
+            CurrentProblemID = metaId;
         }
     }
     if (type !== undefined && type !== null && type >= 0 && type <= 2) {
@@ -1117,13 +1136,20 @@ function reshowLastProblem() {
         data: '',
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
-                notyf.error("没有可重新显示的上一题。");
+                if (parseSessionSaveFailure(res)) {
+                    notyf.error("会话快照保存失败，请检查磁盘或权限后再次点击「重新显示上一题」重试（不会消耗新题）。");
+                } else {
+                    notyf.error("没有可重新显示的上一题。");
+                }
                 return;
             }
             var wasWaiting = (document.getElementById('problemarea').style.display === "none");
-            if (wasWaiting) {
+            var isSwitchingToUnsaved = pendingUnsavedDraw || (LastProblemID > 0 && (LastProblemID !== CurrentProblemID || LastProblemType !== CurrentProblemType));
+            if (wasWaiting || isSwitchingToUnsaved) {
+                var nextNum = pendingUnsavedDraw ? (ProblemID + 1) : Math.max(1, ProblemID);
+                pendingUnsavedDraw = false;
                 applyRenderedProblem(res, null, {
-                    problemNumber: Math.max(1, ProblemID),
+                    problemNumber: nextNum,
                     infoId: 0,
                     showAnswer: false,
                     discarded: false
@@ -1195,11 +1221,17 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
         data: { state: JSON.stringify(prospectiveState) },
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
-                notyf.error("尝试拉取题目时出错。请检查是否剩余足够的题目。");
+                if (parseSessionSaveFailure(res)) {
+                    pendingUnsavedDraw = true;
+                    notyf.error("题目已抽取但会话快照保存失败，请勿重复抽题；请排查后点击「重新显示上一题」重试。");
+                } else {
+                    notyf.error("尝试拉取题目时出错。请检查是否剩余足够的题目。");
+                }
                 if (IsAutoScoring == 1 && IsRoundFlowRunning == 1) {
                     RoundFlow();
                 }
             } else {
+                pendingUnsavedDraw = false;
                 if (IsAutoScoring == 1 && IsRoundFlowRunning == 0) {
                     resetResponderAndTimer();
                 }
@@ -1944,6 +1976,17 @@ function restoreSessionOnLoad() {
             }
         }
 
+        var hasUnsavedLatestDraw = false;
+        if (typeof last_problem_type === 'number' && last_problem_type >= 0 && last_problem_type <= 2
+            && typeof last_problem_id === 'number' && last_problem_id > 0
+            && (last_problem_id !== s.current_id || last_problem_type !== s.current_type)) {
+            LastProblemType = last_problem_type;
+            LastProblemID = last_problem_id;
+            pendingUnsavedDraw = true;
+            hasUnsavedLatestDraw = true;
+            updateReshowButton();
+        }
+
         var nowSec = (typeof server_now === 'number' && server_now > 0) ? server_now : Math.floor(Date.now() / 1000);
         if (s.timer_started_at > 0 && !s.timer_paused) {
             var elapsed = Math.max(0, nowSec - s.timer_started_at);
@@ -2039,6 +2082,10 @@ function restoreSessionOnLoad() {
         }
     } finally {
         isRestoringSession = false;
+    }
+
+    if (hasUnsavedLatestDraw) {
+        notyf.error("检测到上一道已抽取的题目未能写入快照，可点击「重新显示上一题」重试。");
     }
 
     // 若计时在刷新前已过期中断，将清理后的非运行态同步回服务端
