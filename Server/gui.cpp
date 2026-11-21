@@ -1411,21 +1411,30 @@ namespace
 
 	void ApplyFonts(HWND hwnd)
 	{
-		auto setF = [&](int id, HFONT f) {
-			if (HWND c = GetDlgItem(hwnd, id))
-				SendMessageW(c, WM_SETFONT, (WPARAM)f, FALSE);
+		auto setMany = [&](const int* ids, size_t n, HFONT f) {
+			for (size_t i = 0; i < n; ++i)
+				if (HWND c = GetDlgItem(hwnd, ids[i]))
+					SendMessageW(c, WM_SETFONT, (WPARAM)f, FALSE);
 		};
-		for (int id : { Brand, IDC_TITLE }) setF(id, g_font_title);
-		for (int id : { MatchTitle, SettingsTitle, IDC_STATIC_SVC, IDC_STATIC_PB1, IDC_STATIC_LOG }) setF(id, g_font_sect);
-		for (int id : { BrandCaption, MatchHint, SettingsHint, IDC_STATUS, IDC_BTN_COPY_LOCAL, IDC_BTN_COPY_LAN, IDC_BTN_COPY_PIN,
-				IDC_HINT, BankClearSearch, IDC_STATIC_PB2 }) setF(id, g_font_small);
-		for (int id : { NavService, NavProblems, NavMatches, NavSettings, MatchOpen, MatchRefresh, MatchList, AutoScroll,
-				IDC_STATIC_URL1, IDC_STATIC_URL2, IDC_STATIC_PIN, IDC_BTN_START, IDC_BTN_STOP, IDC_BTN_BROWSER,
-				BankSearchLabel, BankSearch, BankFilter, BankEdit, BankAdd, BankList,
-				IDC_BTN_CONVERT, IDC_BTN_MERGE, IDC_BTN_DEDUP, IDC_BTN_BACKUP }) setF(id, g_font_ui);
-		setF(IDC_STATS, g_font_stat);
-		setF(IDC_LOGIN_PIN, g_font_pin);
-		for (int id : { IDC_URL_LOCAL, IDC_URL_LAN, IDC_LOG }) setF(id, g_font_mono);
+		static const int titleIds[] = { Brand, IDC_TITLE };
+		static const int sectIds[]  = { MatchTitle, SettingsTitle, IDC_STATIC_SVC, IDC_STATIC_PB1, IDC_STATIC_LOG };
+		static const int smallIds[] = { BrandCaption, MatchHint, SettingsHint, IDC_STATUS, IDC_BTN_COPY_LOCAL,
+			IDC_BTN_COPY_LAN, IDC_BTN_COPY_PIN, IDC_HINT, BankClearSearch, IDC_STATIC_PB2 };
+		static const int uiIds[]    = { NavService, NavProblems, NavMatches, NavSettings, MatchOpen, MatchRefresh,
+			MatchList, AutoScroll, IDC_STATIC_URL1, IDC_STATIC_URL2, IDC_STATIC_PIN, IDC_BTN_START, IDC_BTN_STOP,
+			IDC_BTN_BROWSER, BankSearchLabel, BankSearch, BankFilter, BankEdit, BankAdd, BankList,
+			IDC_BTN_CONVERT, IDC_BTN_MERGE, IDC_BTN_DEDUP, IDC_BTN_BACKUP };
+		static const int monoIds[]  = { IDC_URL_LOCAL, IDC_URL_LAN, IDC_LOG };
+		static const int statIds[]  = { IDC_STATS };
+		static const int pinIds[]   = { IDC_LOGIN_PIN };
+
+		setMany(titleIds, _countof(titleIds), g_font_title);
+		setMany(sectIds,  _countof(sectIds),  g_font_sect);
+		setMany(smallIds, _countof(smallIds), g_font_small);
+		setMany(uiIds,    _countof(uiIds),    g_font_ui);
+		setMany(monoIds,  _countof(monoIds),  g_font_mono);
+		setMany(statIds,  _countof(statIds),  g_font_stat);
+		setMany(pinIds,   _countof(pinIds),   g_font_pin);
 	}
 
 	void UpdateWindowIcons(HWND hwnd, UINT dpi)
