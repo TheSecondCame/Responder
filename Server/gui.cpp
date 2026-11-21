@@ -1,4 +1,4 @@
-﻿// gui.cpp : Responder 桌面管理程序（Win32 原生窗口）。
+// gui.cpp : Responder 桌面管理程序（Win32 原生窗口）。
 // 服务、题库、比赛和设置共用同一个桌面管理窗口。
 
 // 版权声明：
@@ -13,6 +13,8 @@
 #include <commdlg.h>
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <dwmapi.h>
+#include <objidl.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -21,6 +23,13 @@
 #include <fstream>
 #include <map>
 #include <algorithm>
+#include <cstring>
+
+namespace Gdiplus {
+	using std::min;
+	using std::max;
+}
+#include <gdiplus.h>
 
 #include "responder_problem.h"
 #include "responder_pages.h"
@@ -32,15 +41,20 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 // ===== 控件 ID =====
 #define IDC_STATUS        1001
 #define IDC_URL_LOCAL     1002
 #define IDC_URL_LAN       1003
-#define IDC_LOGIN_PIN           1004
+#define IDC_LOGIN_PIN     1004
 #define IDC_BTN_START     1010
 #define IDC_BTN_STOP      1011
 #define IDC_BTN_BROWSER   1012
+#define IDC_BTN_COPY_LOCAL 1013
+#define IDC_BTN_COPY_LAN   1014
+#define IDC_BTN_COPY_PIN   1015
 #define IDC_STATS         1020
 #define IDC_BTN_CONVERT   1021
 #define IDC_BTN_MERGE     1022
@@ -90,29 +104,40 @@ static void InitDpiScale()
 	g_scale = dpi / 96.0;
 }
 
-// ===== 配色 =====
+// ===== 配色（与网页端 / 比赛大屏统一设计系统）=====
 namespace theme
 {
-	const COLORREF BG         = RGB(242, 247, 253);  // 窗口底色
-	const COLORREF CARD       = RGB(0xFF, 0xFF, 0xFF);  // 卡片
-	const COLORREF BORDER     = RGB(211, 225, 241);  // 卡片描边
-	const COLORREF TEXT       = RGB(24, 47, 78);  // 主文字
-	const COLORREF TEXT_SUB   = RGB(76, 99, 126);  // 次要文字
-	const COLORREF ACCENT     = RGB(0x2B, 0x6C, 0xE6);  // 主色（按钮）
-	const COLORREF ACCENT_HOT = RGB(0x1E, 0x5A, 0xCC);
-	const COLORREF ACCENT_DN  = RGB(0x17, 0x49, 0xA8);
-	const COLORREF ON         = RGB(0x16, 0xA3, 0x4A);  // 已上线
-	const COLORREF OFF        = RGB(0x9C, 0xA3, 0xAF);  // 已下线
-	const COLORREF WARN       = RGB(0xD9, 0x53, 0x1E);  // 错误
-	const COLORREF FIELD      = RGB(0xF8, 0xF9, 0xFB);  // 只读输入框底
+	const COLORREF BG            = RGB(243, 246, 251); // 窗口底色 #F3F6FB
+	const COLORREF CARD          = RGB(255, 255, 255); // 卡片 #FFFFFF
+	const COLORREF BORDER        = RGB(220, 230, 242); // 卡片描边 #DCE6F2
+	const COLORREF TEXT          = RGB(19,  35,  58);  // 主文字 #13233A
+	const COLORREF TEXT_SUB      = RGB(81,  100, 125); // 次要文字 #51647D
+	const COLORREF TEXT_MUTED    = RGB(124, 142, 166); // 弱化文字 #7C8EA6
+	const COLORREF ACCENT        = RGB(29,  99,  220); // 主色 #1D63DC
+	const COLORREF ACCENT_HOT    = RGB(23,  82,  184); // 悬停 #1752B8
+	const COLORREF ACCENT_DN     = RGB(18,  67,  153); // 按下 #124399
+	const COLORREF ACCENT_SOFT   = RGB(235, 242, 255); // 浅蓝底 #EBF2FF
+	const COLORREF ACCENT_BORDER = RGB(191, 219, 254); // 浅蓝描边 #BFDBFE
+	const COLORREF ON            = RGB(21,  128, 61);  // 在线绿 #15803D
+	const COLORREF ON_SOFT       = RGB(220, 252, 231); // #DCFCE7
+	const COLORREF ON_BORDER     = RGB(134, 239, 172); // #86EFAC
+	const COLORREF OFF           = RGB(100, 116, 139); // 离线灰 #64748B
+	const COLORREF OFF_SOFT      = RGB(241, 245, 249); // #F1F5F9
+	const COLORREF WARN          = RGB(220, 38,  38);  // 错误红 #DC2626
+	const COLORREF WARN_SOFT     = RGB(254, 226, 226); // #FEE2E2
+	const COLORREF WARN_BORDER   = RGB(252, 165, 165); // #FCA5A5
+	const COLORREF AMBER         = RGB(180, 83,  9);   // 过渡黄 #B45309
+	const COLORREF AMBER_SOFT    = RGB(254, 243, 199); // #FEF3C7
+	const COLORREF AMBER_BORDER  = RGB(252, 211, 77);  // #FCD34D
+	const COLORREF FIELD         = RGB(248, 250, 252); // 输入框底 #F8FAFC
 }
 
 // ===== 字体 =====
 static HFONT g_font_ui = nullptr;      // 正文 14px
 static HFONT g_font_small = nullptr;   // 小字 12px
 static HFONT g_font_sect = nullptr;    // 区块标题 15px 粗
-static HFONT g_font_title = nullptr;   // 窗口标题 21px 粗
-static HFONT g_font_pin = nullptr;     // PIN 26px 粗等宽
+static HFONT g_font_title = nullptr;   // 窗口标题 22px 粗
+static HFONT g_font_pin = nullptr;     // PIN 24px 粗等宽
 static HFONT g_font_stat = nullptr;    // 统计数字 15px
 static HFONT g_font_mono = nullptr;    // 日志 13px 等宽
 
@@ -126,6 +151,9 @@ static HWND g_log = nullptr;
 static HWND g_hint = nullptr;
 static HWND g_btn_start = nullptr;
 static HWND g_btn_stop = nullptr;
+static HWND g_btn_copy_local = nullptr;
+static HWND g_btn_copy_lan = nullptr;
+static HWND g_btn_copy_pin = nullptr;
 
 static HWND g_btn_convert = nullptr;
 static HWND g_btn_merge = nullptr;
@@ -137,10 +165,19 @@ static std::atomic<bool> g_op_running{ false };  // 是否正在执行题库操�
 static std::atomic<bool> g_stopping{ false };    // 是否正在停止服务
 static std::atomic<bool> g_starting{ false };    // 是否正在启动服务
 static std::string g_last_shown_pin;
+static int g_status_kind = -1; // 0=离线 1=在线 2=过渡 3=错误
+static std::wstring g_status_text;
+static ULONGLONG g_copy_feedback_until[3] = { 0, 0, 0 };
+static bool g_search_focused = false;
 
-// 卡片矩形（WM_SIZE 时按客户区重算）
+// 卡片与容器矩形（WM_SIZE 时按客户区重算）
 static RECT g_panel{};
 static RECT g_card_log = { 0, 0, 0, 0 };
+static RECT g_box_url_local = { 0, 0, 0, 0 };
+static RECT g_box_url_lan = { 0, 0, 0, 0 };
+static RECT g_box_pin = { 0, 0, 0, 0 };
+static RECT g_box_log = { 0, 0, 0, 0 };
+static RECT g_box_search = { 0, 0, 0, 0 };
 
 extern problem_list pl;
 extern problem_list pl_unused;
@@ -156,6 +193,17 @@ namespace
 	void SetText(HWND h, const std::wstring& s)
 	{
 		if (h) SetWindowTextW(h, s.c_str());
+	}
+
+	std::wstring GetText(HWND h)
+	{
+		if (!h) return L"";
+		int len = GetWindowTextLengthW(h);
+		if (len <= 0) return L"";
+		std::wstring out((size_t)len + 1, L'\0');
+		int n = GetWindowTextW(h, out.data(), len + 1);
+		out.resize(n);
+		return out;
 	}
 
 	std::wstring ToWide(const std::string& s)
@@ -176,21 +224,97 @@ namespace
 		return out;
 	}
 
-	// 画圆角矩形（GDI 无原生支持，用圆角矩形路径）
-	void FillRoundRect(HDC dc, const RECT& r, int radius, COLORREF fill, COLORREF border)
+	Gdiplus::Color ToGpColor(COLORREF c, BYTE alpha = 255)
 	{
-		HBRUSH br = CreateSolidBrush(fill);
-		HPEN pen = CreatePen(PS_SOLID, 1, border);
+		return Gdiplus::Color(alpha, GetRValue(c), GetGValue(c), GetBValue(c));
+	}
 
-		HGDIOBJ oldBr = SelectObject(dc, br);
-		HGDIOBJ oldPen = SelectObject(dc, pen);
+	void BuildRoundedPath(Gdiplus::GraphicsPath& path, Gdiplus::REAL x, Gdiplus::REAL y,
+		Gdiplus::REAL w, Gdiplus::REAL h, Gdiplus::REAL radius)
+	{
+		path.Reset();
+		if (w <= 0 || h <= 0) return;
+		Gdiplus::REAL d = std::min(radius * 2.0f, std::min(w, h));
+		if (d <= 0.5f) {
+			path.AddRectangle(Gdiplus::RectF(x, y, w, h));
+			return;
+		}
+		path.AddArc(x, y, d, d, 180.0f, 90.0f);
+		path.AddArc(x + w - d, y, d, d, 270.0f, 90.0f);
+		path.AddArc(x + w - d, y + h - d, d, d, 0.0f, 90.0f);
+		path.AddArc(x, y + h - d, d, d, 90.0f, 90.0f);
+		path.CloseFigure();
+	}
 
-		RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+	// GDI+ 抗锯齿圆角矩形（支持卡片阴影与细描边）
+	void FillRoundRectAA(Gdiplus::Graphics& g, const RECT& r, float radius,
+		COLORREF fill, COLORREF border, float borderWidth = 1.0f, bool shadow = false)
+	{
+		Gdiplus::REAL x = (Gdiplus::REAL)r.left;
+		Gdiplus::REAL y = (Gdiplus::REAL)r.top;
+		Gdiplus::REAL w = (Gdiplus::REAL)(r.right - r.left) - 1.0f;
+		Gdiplus::REAL h = (Gdiplus::REAL)(r.bottom - r.top) - 1.0f;
+		if (w <= 1.0f || h <= 1.0f) return;
 
-		SelectObject(dc, oldPen);
-		SelectObject(dc, oldBr);
-		DeleteObject(br);
-		DeleteObject(pen);
+		if (shadow) {
+			for (int i = 2; i >= 1; --i) {
+				Gdiplus::GraphicsPath sp;
+				BuildRoundedPath(sp, x, y + (Gdiplus::REAL)i, w, h, radius);
+				Gdiplus::Pen spPen(Gdiplus::Color(i == 2 ? 9 : 14, 19, 35, 58), (Gdiplus::REAL)(i * 2));
+				spPen.SetLineJoin(Gdiplus::LineJoinRound);
+				g.DrawPath(&spPen, &sp);
+			}
+		}
+
+		Gdiplus::GraphicsPath path;
+		BuildRoundedPath(path, x, y, w, h, radius);
+		Gdiplus::SolidBrush br(ToGpColor(fill));
+		g.FillPath(&br, &path);
+		if (borderWidth > 0.0f) {
+			Gdiplus::Pen pen(ToGpColor(border), borderWidth);
+			g.DrawPath(&pen, &path);
+		}
+	}
+
+	void ApplyDwmTheme(HWND hwnd)
+	{
+		BOOL dark = FALSE;
+		DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+		COLORREF cap = theme::BG;
+		COLORREF txt = theme::TEXT;
+		COLORREF brd = theme::BORDER;
+		DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &cap, sizeof(cap));
+		DwmSetWindowAttribute(hwnd, 36 /* DWMWA_TEXT_COLOR */, &txt, sizeof(txt));
+		DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &brd, sizeof(brd));
+	}
+
+	bool CopyTextToClipboard(HWND hwnd, const std::wstring& text)
+	{
+		if (text.empty() || text == L"—") return false;
+		if (!OpenClipboard(hwnd)) return false;
+		EmptyClipboard();
+		size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+		HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+		if (hMem) {
+			void* ptr = GlobalLock(hMem);
+			if (ptr) {
+				std::memcpy(ptr, text.c_str(), bytes);
+				GlobalUnlock(hMem);
+				SetClipboardData(CF_UNICODETEXT, hMem);
+			} else {
+				GlobalFree(hMem);
+				hMem = nullptr;
+			}
+		}
+		CloseClipboard();
+		return hMem != nullptr;
+	}
+
+	void TriggerCopyFeedback(HWND hwnd, int index, int btnId)
+	{
+		g_copy_feedback_until[index] = GetTickCount64() + 1500;
+		SetText(GetDlgItem(hwnd, btnId), L"✓ 已复制");
+		InvalidateRect(GetDlgItem(hwnd, btnId), nullptr, FALSE);
 	}
 
 	void AppendLog(const std::wstring& line)
@@ -384,85 +508,231 @@ namespace
 	struct QuestionForm {
 		Question original;
 		int savedType = -1, savedId = 0;
+		bool layoutCaptured = false;
+		int fullHeight = 0;
+		int compactDelta = 0;
+		RECT rcAnsLabel{};
+		RECT rcAnswer{};
+		RECT rcFeedback{};
+		RECT rcOk{};
+		RECT rcCancel{};
 	};
 
-	void ShowTypeFields(HWND dlg, int type)
+	void ApplyQuestionLayout(HWND dlg, QuestionForm& form, int type)
 	{
+		bool compact = (type == 1);
 		SetDlgItemTextW(dlg, QE_EXTRA_LABEL, type == 0 ? L"四个选项（依次为 A、B、C、D）" : L"四条线索（按展示顺序）");
-		for (int id : { QE_EXTRA_LABEL, QE_LINE1, QE_LINE2, QE_LINE3, QE_LINE4 })
-			ShowWindow(GetDlgItem(dlg, id), type == 1 ? SW_HIDE : SW_SHOWNA);
+		const wchar_t* prefixes[4] = {
+			type == 0 ? L"A." : L"线索 1",
+			type == 0 ? L"B." : L"线索 2",
+			type == 0 ? L"C." : L"线索 3",
+			type == 0 ? L"D." : L"线索 4"
+		};
+		for (int i = 0; i < 4; ++i)
+			SetDlgItemTextW(dlg, QE_PREFIX1 + i, prefixes[i]);
+
+		for (int id : { QE_EXTRA_LABEL, QE_PREFIX1, QE_PREFIX2, QE_PREFIX3, QE_PREFIX4,
+			QE_LINE1, QE_LINE2, QE_LINE3, QE_LINE4 })
+			ShowWindow(GetDlgItem(dlg, id), compact ? SW_HIDE : SW_SHOWNA);
+
+		if (form.layoutCaptured && form.compactDelta > 0) {
+			int shift = compact ? -form.compactDelta : 0;
+			auto moveRel = [&](int id, const RECT& base) {
+				HWND c = GetDlgItem(dlg, id);
+				if (c) MoveWindow(c, base.left, base.top + shift, base.right - base.left, base.bottom - base.top, TRUE);
+			};
+			moveRel(QE_ANS_LABEL, form.rcAnsLabel);
+			moveRel(QE_ANSWER, form.rcAnswer);
+			moveRel(QE_FEEDBACK, form.rcFeedback);
+			moveRel(IDOK, form.rcOk);
+			moveRel(IDCANCEL, form.rcCancel);
+
+			RECT wr{};
+			GetWindowRect(dlg, &wr);
+			SetWindowPos(dlg, nullptr, 0, 0, wr.right - wr.left, form.fullHeight + shift,
+				SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		InvalidateRect(dlg, nullptr, TRUE);
+	}
+
+	void DrawDialogButton(LPDRAWITEMSTRUCT dis)
+	{
+		HDC dc = dis->hDC;
+		RECT r = dis->rcItem;
+		int w = r.right - r.left, h = r.bottom - r.top;
+		if (w <= 0 || h <= 0) return;
+
+		HDC memDC = CreateCompatibleDC(dc);
+		HBITMAP memBmp = CreateCompatibleBitmap(dc, w, h);
+		HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
+
+		HBRUSH bgBr = CreateSolidBrush(theme::BG);
+		RECT local = { 0, 0, w, h };
+		FillRect(memDC, &local, bgBr);
+		DeleteObject(bgBr);
+
+		bool primary = (dis->CtlID == IDOK);
+		bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+		bool focused = (dis->itemState & ODS_FOCUS) != 0;
+		COLORREF bg = primary ? (pressed ? theme::ACCENT_DN : theme::ACCENT) : (pressed ? theme::ACCENT_SOFT : theme::CARD);
+		COLORREF fg = primary ? RGB(255, 255, 255) : theme::TEXT;
+		COLORREF border = primary ? bg : (focused ? theme::ACCENT : theme::BORDER);
+
+		RECT rr = local;
+		InflateRect(&rr, -1, -1);
+		if (pressed) InflateRect(&rr, -1, -1);
+		{
+			Gdiplus::Graphics g(memDC);
+			g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+			g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+			FillRoundRectAA(g, rr, (float)S(6), bg, border, 1.0f, false);
+		}
+
+		wchar_t text[64] = { 0 };
+		GetWindowTextW(dis->hwndItem, text, 64);
+		SetBkMode(memDC, TRANSPARENT);
+		SetTextColor(memDC, fg);
+		HFONT oldF = (HFONT)SelectObject(memDC, g_font_ui ? g_font_ui : (HFONT)GetStockObject(DEFAULT_GUI_FONT));
+		DrawTextW(memDC, text, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		SelectObject(memDC, oldF);
+
+		BitBlt(dc, r.left, r.top, w, h, memDC, 0, 0, SRCCOPY);
+		SelectObject(memDC, oldBmp);
+		DeleteObject(memBmp);
+		DeleteDC(memDC);
 	}
 
 	INT_PTR CALLBACK QuestionDialog(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
 	{
-		if (msg == WM_INITDIALOG) {
+		switch (msg) {
+		case WM_INITDIALOG: {
 			auto* form = reinterpret_cast<QuestionForm*>(lp);
 			SetWindowLongPtrW(dlg, DWLP_USER, lp);
+			ApplyDwmTheme(dlg);
+			HICON hSm = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
+				GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+			if (hSm) SendMessageW(dlg, WM_SETICON, ICON_SMALL, (LPARAM)hSm);
+
 			const auto& q = form->original;
-			std::wstring title = q.id ? std::wstring(L"编辑") + typeNames[q.type] + L" · " + std::to_wstring(q.id) : L"新增题目";
+			std::wstring title = q.id ? std::wstring(L"编辑") + typeNames[q.type] + L" · #" + std::to_wstring(q.id) : L"新增题目";
 			SetWindowTextW(dlg, title.c_str());
+			SetDlgItemTextW(dlg, QE_BADGE, q.id ? (std::wstring(typeNames[q.type]) + L" · #" + std::to_wstring(q.id)).c_str() : L"新题录入");
+
 			for (auto name : typeNames) SendDlgItemMessageW(dlg, QE_TYPE, CB_ADDSTRING, 0, (LPARAM)name);
 			for (auto name : { L"未指定", L"1 · 简单", L"2 · 中等", L"3 · 困难" })
 				SendDlgItemMessageW(dlg, QE_LEVEL, CB_ADDSTRING, 0, (LPARAM)name);
 			SendDlgItemMessageW(dlg, QE_TYPE, CB_SETCURSEL, q.type, 0);
 			SendDlgItemMessageW(dlg, QE_LEVEL, CB_SETCURSEL, q.level, 0);
+			SetWindowTheme(GetDlgItem(dlg, QE_TYPE), L"Explorer", nullptr);
+			SetWindowTheme(GetDlgItem(dlg, QE_LEVEL), L"Explorer", nullptr);
 			EnableWindow(GetDlgItem(dlg, QE_TYPE), !q.id);
 			SetDlgItemTextW(dlg, QE_STEM, ToWide(q.stem).c_str());
 			SetDlgItemTextW(dlg, QE_ANSWER, ToWide(q.answer).c_str());
 			for (size_t i = 0; i < std::min<size_t>(4, q.lines.size()); ++i)
 				SetDlgItemTextW(dlg, QE_LINE1 + (int)i, ToWide(q.lines[i]).c_str());
-			ShowTypeFields(dlg, q.type);
+
+			auto childRect = [&](int id) {
+				RECT rc{};
+				GetWindowRect(GetDlgItem(dlg, id), &rc);
+				MapWindowPoints(nullptr, dlg, (LPPOINT)&rc, 2);
+				return rc;
+			};
+			RECT wr{};
+			GetWindowRect(dlg, &wr);
+			form->fullHeight = wr.bottom - wr.top;
+			RECT extraRc = childRect(QE_EXTRA_LABEL);
+			form->rcAnsLabel = childRect(QE_ANS_LABEL);
+			form->rcAnswer = childRect(QE_ANSWER);
+			form->rcFeedback = childRect(QE_FEEDBACK);
+			form->rcOk = childRect(IDOK);
+			form->rcCancel = childRect(IDCANCEL);
+			form->compactDelta = form->rcAnsLabel.top - extraRc.top;
+			form->layoutCaptured = (form->compactDelta > 0);
+
+			ApplyQuestionLayout(dlg, *form, q.type);
 			SetFocus(GetDlgItem(dlg, q.id ? QE_STEM : QE_TYPE));
 			return FALSE;
 		}
-		if (msg != WM_COMMAND) return FALSE;
-		auto& form = *reinterpret_cast<QuestionForm*>(GetWindowLongPtrW(dlg, DWLP_USER));
-		int type = (int)SendDlgItemMessageW(dlg, QE_TYPE, CB_GETCURSEL, 0, 0);
-		switch (LOWORD(wp)) {
-		case QE_TYPE:
-			if (HIWORD(wp) == CBN_SELCHANGE) ShowTypeFields(dlg, type);
+		case WM_CTLCOLORDLG: {
+			static HBRUSH dlgBg = CreateSolidBrush(theme::BG);
+			return (INT_PTR)dlgBg;
+		}
+		case WM_CTLCOLORSTATIC: {
+			HDC dc = (HDC)wp;
+			HWND ctl = (HWND)lp;
+			int cid = GetDlgCtrlID(ctl);
+			SetBkMode(dc, TRANSPARENT);
+			if (cid == QE_FEEDBACK) SetTextColor(dc, theme::WARN);
+			else if (cid == QE_BADGE) SetTextColor(dc, theme::ACCENT);
+			else if (cid >= QE_PREFIX1 && cid <= QE_PREFIX4) SetTextColor(dc, theme::ACCENT_DN);
+			else if (cid == QE_STEM_LABEL || cid == QE_EXTRA_LABEL || cid == QE_ANS_LABEL) SetTextColor(dc, theme::TEXT);
+			else SetTextColor(dc, theme::TEXT_SUB);
+			static HBRUSH dlgStaticBg = CreateSolidBrush(theme::BG);
+			return (INT_PTR)dlgStaticBg;
+		}
+		case WM_CTLCOLOREDIT: {
+			HDC dc = (HDC)wp;
+			SetBkMode(dc, OPAQUE);
+			SetBkColor(dc, theme::CARD);
+			SetTextColor(dc, theme::TEXT);
+			static HBRUSH dlgEditBg = CreateSolidBrush(theme::CARD);
+			return (INT_PTR)dlgEditBg;
+		}
+		case WM_DRAWITEM:
+			DrawDialogButton((LPDRAWITEMSTRUCT)lp);
 			return TRUE;
-		case IDCANCEL:
-			EndDialog(dlg, IDCANCEL);
-			return TRUE;
-		case IDOK:
-			try {
-				auto text = [&](int id) {
-					HWND field = GetDlgItem(dlg, id);
-					std::wstring s(GetWindowTextLengthW(field) + 1, L'\0');
-					auto n = GetWindowTextW(field, s.data(), (int)s.size());
-					s.resize(n);
-					return ToUtf8(s);
-				};
-				auto required = [&](int id, const char* error) {
-					auto s = text(id);
-					if (s.find_first_not_of(" \t\r\n") == std::string::npos) {
-						SetFocus(GetDlgItem(dlg, id));
-						throw std::runtime_error(error);
-					}
-					return s;
-				};
-				Question q;
-				q.type = type;
-				q.level = (int)SendDlgItemMessageW(dlg, QE_LEVEL, CB_GETCURSEL, 0, 0);
-				if (q.level < 0) throw std::runtime_error("请选择难度。");
-				q.stem = required(QE_STEM, "请输入题干。");
-				if (type != 1)
-					for (int i = 0; i < 4; ++i)
-						q.lines.push_back(required(QE_LINE1 + i, type == 0 ? "请填写全部四个选项。" : "请填写全部四条线索。"));
-				q.answer = required(QE_ANSWER, "请输入答案。");
-				// Imported choice banks may use the answer text rather than a letter.
-				if (type == 0 && q.answer.size() == 1 && q.answer[0] >= 'a' && q.answer[0] <= 'd')
-					q.answer[0] -= 'a' - 'A';
-				if (type == 0) form.savedId = SaveQuestion(q, form.original, &problem_list::choice_problems);
-				else if (type == 1) form.savedId = SaveQuestion(q, form.original, &problem_list::completion_problems);
-				else form.savedId = SaveQuestion(q, form.original, &problem_list::info_problems);
-				form.savedType = type;
-				EndDialog(dlg, IDOK);
-			} catch (const std::exception& ex) {
-				SetDlgItemTextW(dlg, QE_FEEDBACK, ToWide(ex.what()).c_str());
+		case WM_COMMAND: {
+			auto* form = reinterpret_cast<QuestionForm*>(GetWindowLongPtrW(dlg, DWLP_USER));
+			if (!form) return FALSE;
+			int type = (int)SendDlgItemMessageW(dlg, QE_TYPE, CB_GETCURSEL, 0, 0);
+			switch (LOWORD(wp)) {
+			case QE_TYPE:
+				if (HIWORD(wp) == CBN_SELCHANGE) ApplyQuestionLayout(dlg, *form, type);
+				return TRUE;
+			case IDCANCEL:
+				EndDialog(dlg, IDCANCEL);
+				return TRUE;
+			case IDOK:
+				try {
+					auto text = [&](int id) {
+						HWND field = GetDlgItem(dlg, id);
+						std::wstring s(GetWindowTextLengthW(field) + 1, L'\0');
+						auto n = GetWindowTextW(field, s.data(), (int)s.size());
+						s.resize(n);
+						return ToUtf8(s);
+					};
+					auto required = [&](int id, const char* error) {
+						auto s = text(id);
+						if (s.find_first_not_of(" \t\r\n") == std::string::npos) {
+							SetFocus(GetDlgItem(dlg, id));
+							throw std::runtime_error(error);
+						}
+						return s;
+					};
+					Question q;
+					q.type = type;
+					q.level = (int)SendDlgItemMessageW(dlg, QE_LEVEL, CB_GETCURSEL, 0, 0);
+					if (q.level < 0) throw std::runtime_error("请选择难度。");
+					q.stem = required(QE_STEM, "请输入题干。");
+					if (type != 1)
+						for (int i = 0; i < 4; ++i)
+							q.lines.push_back(required(QE_LINE1 + i, type == 0 ? "请填写全部四个选项。" : "请填写全部四条线索。"));
+					q.answer = required(QE_ANSWER, "请输入答案。");
+					// Imported choice banks may use the answer text rather than a letter.
+					if (type == 0 && q.answer.size() == 1 && q.answer[0] >= 'a' && q.answer[0] <= 'd')
+						q.answer[0] -= 'a' - 'A';
+					if (type == 0) form->savedId = SaveQuestion(q, form->original, &problem_list::choice_problems);
+					else if (type == 1) form->savedId = SaveQuestion(q, form->original, &problem_list::completion_problems);
+					else form->savedId = SaveQuestion(q, form->original, &problem_list::info_problems);
+					form->savedType = type;
+					EndDialog(dlg, IDOK);
+				} catch (const std::exception& ex) {
+					SetDlgItemTextW(dlg, QE_FEEDBACK, ToWide(ex.what()).c_str());
+				}
+				return TRUE;
 			}
-			return TRUE;
+			break;
+		}
 		}
 		return FALSE;
 	}
@@ -610,19 +880,28 @@ namespace
 		bool running = server_core::is_running();
 		EnableWindow(GetDlgItem(hwnd, MatchOpen), running);
 
+		int nextKind = 0;
+		std::wstring nextStatusText = L"服务未启动";
 		if (running)
 		{
-			SetText(g_status, L"● 已上线");
+			nextKind = 1;
+			nextStatusText = L"服务运行中";
 			EnableWindow(g_btn_start, FALSE);
 			EnableWindow(g_btn_stop, TRUE);
 			EnableWindow(g_btn_browser, TRUE);
 
 			std::string ip = get_first_ip();
-			SetText(g_url_local, L"http://127.0.0.1:" + std::to_wstring(server_core::PORT));
-			SetText(g_url_lan, ip.empty()
+			std::wstring localUrl = L"http://127.0.0.1:" + std::to_wstring(server_core::PORT);
+			std::wstring lanUrl = ip.empty()
 				? L"未检测到局域网地址"
-				: L"http://" + ToWide(ip) + L":" + std::to_wstring(server_core::PORT));
+				: L"http://" + ToWide(ip) + L":" + std::to_wstring(server_core::PORT);
+			if (GetText(g_url_local) != localUrl) SetText(g_url_local, localUrl);
+			if (GetText(g_url_lan) != lanUrl) SetText(g_url_lan, lanUrl);
 			SetText(g_hint, L"前端电脑可通过局域网地址和登录 PIN 进入比赛。");
+
+			EnableWindow(g_btn_copy_local, TRUE);
+			EnableWindow(g_btn_copy_lan, !ip.empty());
+			EnableWindow(g_btn_copy_pin, !authentic_pin.empty());
 
 			if (g_last_shown_pin != authentic_pin)
 			{
@@ -632,28 +911,55 @@ namespace
 		}
 		else
 		{
-			SetText(g_status, L"○ 已下线");
 			EnableWindow(g_btn_start, TRUE);
 			EnableWindow(g_btn_stop, FALSE);
 			EnableWindow(g_btn_browser, FALSE);
-			SetText(g_url_local, L"—");
-			SetText(g_url_lan, L"—");
-			SetText(g_pin, L"—");
+			EnableWindow(g_btn_copy_local, FALSE);
+			EnableWindow(g_btn_copy_lan, FALSE);
+			EnableWindow(g_btn_copy_pin, FALSE);
+			if (GetText(g_url_local) != L"—") SetText(g_url_local, L"—");
+			if (GetText(g_url_lan) != L"—") SetText(g_url_lan, L"—");
+			if (GetText(g_pin) != L"—") SetText(g_pin, L"—");
 			g_last_shown_pin.clear();
 
 			std::string err = server_core::last_error();
-			if (!err.empty())
+			if (!err.empty()) {
+				nextKind = 3;
+				nextStatusText = L"启动失败";
 				SetText(g_hint, ToWide(err));
-			else if (g_stopping)
+			} else if (g_stopping) {
+				nextKind = 2;
+				nextStatusText = L"正在下线…";
 				SetText(g_hint, L"正在下线…");
-			else if (g_starting)
+			} else if (g_starting) {
+				nextKind = 2;
+				nextStatusText = L"正在上线…";
 				SetText(g_hint, L"正在上线…");
-			else
+			} else {
+				nextKind = 0;
+				nextStatusText = L"服务未启动";
 				SetText(g_hint, L"点击「上线」后，前端电脑即可连接。");
+			}
 		}
 
-		// 状态颜色：上线绿、下线灰、有错误红
-		InvalidateRect(g_status, nullptr, TRUE);
+		if (g_status_kind != nextKind || g_status_text != nextStatusText) {
+			g_status_kind = nextKind;
+			g_status_text = nextStatusText;
+			SetText(g_status, nextStatusText);
+			InvalidateRect(g_status, nullptr, FALSE);
+		}
+
+		const ULONGLONG now = GetTickCount64();
+		const int copyIds[3] = { IDC_BTN_COPY_LOCAL, IDC_BTN_COPY_LAN, IDC_BTN_COPY_PIN };
+		const wchar_t* copyLabels[3] = { L"复制", L"复制地址", L"复制 PIN" };
+		for (int i = 0; i < 3; ++i) {
+			if (g_copy_feedback_until[i] && now >= g_copy_feedback_until[i]) {
+				g_copy_feedback_until[i] = 0;
+				HWND btn = GetDlgItem(hwnd, copyIds[i]);
+				SetText(btn, copyLabels[i]);
+				InvalidateRect(btn, nullptr, FALSE);
+			}
+		}
 	}
 
 	void DoStart(HWND hwnd)
@@ -721,68 +1027,89 @@ namespace
 		GetClientRect(hwnd, &rc);
 		const int w = MulDiv(rc.right, 96, S(96)), h = MulDiv(rc.bottom, 96, S(96));
 		const int left = 198, panelW = w - left - 24, inner = panelW - 40;
-		auto place = [&](int id, int x, int y, int width, int height, bool visible = true) {
+		const int x = left + 20, rightEdge = x + inner;
+		auto place = [&](int id, int px, int py, int width, int height, bool visible = true) {
 			HWND ctl = GetDlgItem(hwnd, id);
-			if (visible) MoveWindow(ctl, S(x), S(y), S(width), S(height), TRUE);
+			if (visible) MoveWindow(ctl, S(px), S(py), S(width), S(height), TRUE);
 			ShowWindow(ctl, visible ? SW_SHOWNA : SW_HIDE);
 		};
-		place(Brand, 22, 24, 130, 34);
-		place(BrandCaption, 23, 61, 130, 22);
-		for (int i = 0; i < 4; ++i) place(NavService + i, 10, 110 + 52 * i, 154, 44);
-		place(IDC_TITLE, left, 19, 210, 38);
-		place(IDC_STATUS, w - 160, 23, 136, 31);
+		place(Brand, 22, 22, 134, 34);
+		place(BrandCaption, 23, 58, 134, 22);
+		for (int i = 0; i < 4; ++i) place(NavService + i, 12, 108 + 50 * i, 150, 42);
+		place(IDC_TITLE, left, 18, 220, 38);
+		place(IDC_STATUS, w - 168, 22, 144, 32);
+
 		const bool service = currentPage == NavService, problems = currentPage == NavProblems;
 		const bool matches = currentPage == NavMatches, settings = currentPage == NavSettings;
-		int panelBottom = matches || problems ? h - 24 : service ? 306 : 214;
-		g_panel = { S(left), S(76), S(w - 24), S(panelBottom) };
-		int x = left + 20;
-		place(IDC_STATIC_SVC, x, 98, 116, 26, service);
-		place(IDC_BTN_START, w - 312, 90, 72, 36, service);
-		place(IDC_BTN_STOP, w - 232, 90, 72, 36, service);
-		place(IDC_BTN_BROWSER, w - 152, 90, 108, 36, service);
-		place(IDC_STATIC_URL1, x, 150, 92, 24, service);
-		place(IDC_URL_LOCAL, x + 104, 150, inner - 104, 25, service);
-		place(IDC_STATIC_URL2, x, 184, 92, 24, service);
-		place(IDC_URL_LAN, x + 104, 184, inner - 104, 25, service);
-		place(IDC_STATIC_PIN, x, 221, 92, 32, service);
-		place(IDC_LOGIN_PIN, x + 104, 220, 140, 36, service);
-		place(IDC_HINT, x, 269, inner, 25, service);
+		int panelBottom = matches || problems ? h - 24 : service ? 324 : 216;
+		g_panel = { S(left), S(74), S(w - 24), S(panelBottom) };
 
-		place(IDC_STATIC_PB1, x, 98, 90, 26, problems);
-		place(BankSearchLabel, x, 143, 40, 23, problems);
-		place(BankSearch, x + 44, 138, inner - 222, 29, problems);
-		place(BankClearSearch, x + inner - 170, 138, 56, 29, problems);
-		place(BankFilter, x + inner - 104, 138, 104, 134, problems);
-		place(BankEdit, w - 242, 90, 92, 34, problems);
-		place(BankAdd, w - 142, 90, 98, 34, problems);
-		place(BankList, x, 179, inner, h - 337, problems);
+		// 服务管理卡片
+		place(IDC_STATIC_SVC, x, 96, 120, 26, service);
+		place(IDC_BTN_BROWSER, rightEdge - 114, 90, 114, 34, service);
+		place(IDC_BTN_STOP, rightEdge - 196, 90, 74, 34, service);
+		place(IDC_BTN_START, rightEdge - 278, 90, 74, 34, service);
+
+		place(IDC_STATIC_URL1, x, 145, 84, 24, service);
+		g_box_url_local = { S(x + 90), S(141), S(rightEdge - 82), S(173) };
+		place(IDC_URL_LOCAL, x + 100, 147, std::max(60, inner - 90 - 82 - 18), 20, service);
+		place(IDC_BTN_COPY_LOCAL, rightEdge - 74, 141, 74, 32, service);
+
+		place(IDC_STATIC_URL2, x, 185, 84, 24, service);
+		g_box_url_lan = { S(x + 90), S(181), S(rightEdge - 98), S(213) };
+		place(IDC_URL_LAN, x + 100, 187, std::max(60, inner - 90 - 98 - 18), 20, service);
+		place(IDC_BTN_COPY_LAN, rightEdge - 90, 181, 90, 32, service);
+
+		place(IDC_STATIC_PIN, x, 231, 84, 28, service);
+		g_box_pin = { S(x + 90), S(224), S(x + 244), S(266) };
+		place(IDC_LOGIN_PIN, x + 98, 230, 138, 29, service);
+		place(IDC_BTN_COPY_PIN, x + 254, 229, 90, 32, service);
+		place(IDC_HINT, x, 282, inner, 24, service);
+
+		// 题库管理卡片
+		place(IDC_STATIC_PB1, x, 96, 110, 26, problems);
+		place(BankSearchLabel, x, 143, 0, 0, false);
+		g_box_search = { S(x), S(138), S(x + inner - 184), S(170) };
+		place(BankSearch, x + 32, 144, std::max(60, inner - 184 - 40), 20, problems);
+		place(BankClearSearch, x + inner - 176, 138, 58, 32, problems);
+		place(BankFilter, x + inner - 110, 138, 110, 150, problems);
+		place(BankEdit, rightEdge - 208, 90, 96, 34, problems);
+		place(BankAdd, rightEdge - 104, 90, 104, 34, problems);
+		place(BankList, x, 180, inner, h - 338, problems);
 		if (problems) {
 			HWND list = GetDlgItem(hwnd, BankList);
-			const int widths[] = { 48, 70, inner - 244, 48, 56 };
+			const int widths[] = { 48, 70, std::max(100, inner - 248), 48, 58 };
 			for (int i = 0; i < 5; ++i) ListView_SetColumnWidth(list, i, S(widths[i]));
 		}
 		place(IDC_STATS, x, h - 150, inner, 24, problems);
 		for (int i = 0; i < 4; ++i)
-			place(IDC_BTN_CONVERT + i, x + i * (inner + 8) / 4, h - 112, (inner - 24) / 4, 32, problems);
+			place(IDC_BTN_CONVERT + i, x + i * (inner + 8) / 4, h - 114, (inner - 24) / 4, 34, problems);
 		place(IDC_STATIC_PB2, x, h - 71, inner, 38, problems);
+
+		// 日志卡片
 		const int logY = panelBottom + 14;
 		g_card_log = { S(left), S(logY), S(w - 24), S(h - 18) };
-		place(IDC_STATIC_LOG, x, logY + 12, inner, 23, service);
-		place(IDC_LOG, x, logY + 40, inner, std::max(16, h - logY - 70), service);
-		place(MatchTitle, x, 96, 150, 25, matches);
-		place(MatchOpen, w - 258, 90, 118, 34, matches);
-		place(MatchRefresh, w - 130, 90, 86, 34, matches);
+		g_box_log = { S(x), S(logY + 42), S(rightEdge), S(h - 32) };
+		place(IDC_STATIC_LOG, x, logY + 12, inner, 24, service);
+		place(IDC_LOG, x + 10, logY + 49, std::max(40, inner - 20), std::max(16, h - logY - 88), service);
+
+		// 比赛管理卡片
+		place(MatchTitle, x, 96, 150, 26, matches);
+		place(MatchOpen, rightEdge - 216, 90, 122, 34, matches);
+		place(MatchRefresh, rightEdge - 86, 90, 86, 34, matches);
 		place(MatchList, x, 142, inner, h - 228, matches);
 		if (matches) {
 			HWND list = GetDlgItem(hwnd, MatchList);
-			ListView_SetColumnWidth(list, 0, S(inner - 205));
+			ListView_SetColumnWidth(list, 0, S(std::max(120, inner - 205)));
 			ListView_SetColumnWidth(list, 1, S(106));
 			ListView_SetColumnWidth(list, 2, S(72));
 		}
 		place(MatchHint, x, h - 65, inner, 24, matches);
-		place(SettingsTitle, x, 96, inner, 25, settings);
-		place(AutoScroll, x, 137, inner, 27, settings);
-		place(SettingsHint, x, 176, inner, 24, settings);
+
+		// 设置卡片
+		place(SettingsTitle, x, 96, inner, 26, settings);
+		place(AutoScroll, x, 138, inner, 28, settings);
+		place(SettingsHint, x, 178, inner, 24, settings);
 	}
 }
 
@@ -803,13 +1130,13 @@ namespace
 			return CreateFontIndirectW(&lf);
 		};
 
-		iconFont = make(-18, FW_NORMAL, L"Segoe MDL2 Assets");
-		g_font_ui    = make(-15, FW_NORMAL, L"Microsoft YaHei UI");
-		g_font_small = make(-13, FW_NORMAL, L"Microsoft YaHei UI");
+		iconFont = make(-17, FW_NORMAL, L"Segoe MDL2 Assets");
+		g_font_ui    = make(-14, FW_NORMAL, L"Microsoft YaHei UI");
+		g_font_small = make(-12, FW_NORMAL, L"Microsoft YaHei UI");
 		g_font_sect  = make(-16, FW_SEMIBOLD, L"Microsoft YaHei UI");
-		g_font_title = make(-23, FW_SEMIBOLD, L"Microsoft YaHei UI");
-		g_font_stat  = make(-15, FW_NORMAL, L"Microsoft YaHei UI");
-		g_font_pin   = make(-27, FW_BOLD, L"Consolas");
+		g_font_title = make(-22, FW_BOLD, L"Microsoft YaHei UI");
+		g_font_stat  = make(-14, FW_SEMIBOLD, L"Microsoft YaHei UI");
+		g_font_pin   = make(-24, FW_BOLD, L"Consolas");
 		g_font_mono  = make(-13, FW_NORMAL, L"Consolas");
 	}
 
@@ -932,93 +1259,193 @@ namespace
 		return c;
 	}
 
-	// 自绘按钮
+	void DrawStatusBadge(HDC dc, const RECT& r)
+	{
+		int w = r.right - r.left, h = r.bottom - r.top;
+		if (w <= 0 || h <= 0) return;
+
+		HDC memDC = CreateCompatibleDC(dc);
+		HBITMAP memBmp = CreateCompatibleBitmap(dc, w, h);
+		HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
+
+		HBRUSH bgBr = CreateSolidBrush(theme::BG);
+		RECT local = { 0, 0, w, h };
+		FillRect(memDC, &local, bgBr);
+		DeleteObject(bgBr);
+
+		COLORREF bg = theme::OFF_SOFT, border = theme::BORDER, dot = theme::OFF, fg = theme::TEXT_SUB;
+		if (g_status_kind == 1) {
+			bg = theme::ON_SOFT; border = theme::ON_BORDER; dot = theme::ON; fg = theme::ON;
+		} else if (g_status_kind == 2) {
+			bg = theme::AMBER_SOFT; border = theme::AMBER_BORDER; dot = theme::AMBER; fg = theme::AMBER;
+		} else if (g_status_kind == 3) {
+			bg = theme::WARN_SOFT; border = theme::WARN_BORDER; dot = theme::WARN; fg = theme::WARN;
+		}
+
+		const wchar_t* label = g_status_text.empty() ? L"服务未启动" : g_status_text.c_str();
+		HFONT oldF = (HFONT)SelectObject(memDC, g_font_small ? g_font_small : g_font_ui);
+		SIZE ts{};
+		GetTextExtentPoint32W(memDC, label, (int)wcslen(label), &ts);
+		int pillW = std::min(w - 2, ts.cx + S(36));
+		int pillH = std::min(h - 2, S(28));
+		RECT pill = { w - pillW - 1, (h - pillH) / 2, w - 1, (h + pillH) / 2 };
+
+		{
+			Gdiplus::Graphics g(memDC);
+			g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+			g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+			FillRoundRectAA(g, pill, (float)pillH * 0.5f, bg, border, 1.0f, false);
+
+			float dotSize = (float)S(8);
+			float dotX = (float)pill.left + (float)S(12);
+			float dotY = (float)pill.top + ((float)pillH - dotSize) * 0.5f;
+			Gdiplus::SolidBrush dotBr(ToGpColor(dot));
+			g.FillEllipse(&dotBr, dotX, dotY, dotSize, dotSize);
+		}
+
+		SetBkMode(memDC, TRANSPARENT);
+		SetTextColor(memDC, fg);
+		RECT textBox = pill;
+		textBox.left += S(25);
+		textBox.right -= S(10);
+		DrawTextW(memDC, label, -1, &textBox, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
+		SelectObject(memDC, oldF);
+
+		BitBlt(dc, r.left, r.top, w, h, memDC, 0, 0, SRCCOPY);
+		SelectObject(memDC, oldBmp);
+		DeleteObject(memBmp);
+		DeleteDC(memDC);
+	}
+
+	// 双缓冲 + GDI+ 抗锯齿自绘按钮与状态徽章
 	void DrawButton(LPDRAWITEMSTRUCT dis)
 	{
+		if (dis->CtlID == IDC_STATUS) {
+			DrawStatusBadge(dis->hDC, dis->rcItem);
+			return;
+		}
+
 		HDC dc = dis->hDC;
 		RECT r = dis->rcItem;
+		int w = r.right - r.left, h = r.bottom - r.top;
+		if (w <= 0 || h <= 0) return;
+
+		HDC memDC = CreateCompatibleDC(dc);
+		HBITMAP memBmp = CreateCompatibleBitmap(dc, w, h);
+		HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
+
+		RECT local = { 0, 0, w, h };
 		bool disabled = (dis->itemState & ODS_DISABLED) != 0;
 		auto it = motions.find(dis->hwndItem);
 		float hot = disabled || it == motions.end() ? 0.f : it->second.hover;
 		float press = disabled ? 0.f : it != motions.end() ? it->second.press
 			: float((dis->itemState & ODS_SELECTED) != 0);
-		int inset = int(S(2) * press + 0.5f);
+		int inset = int(S(1) * press + 0.5f);
 		int id = (int)dis->CtlID;
 
 		if (id >= NavService && id <= NavSettings) {
 			bool active = currentPage == id;
-			FillRect(dc, &r, (HBRUSH)GetStockObject(WHITE_BRUSH));
-			COLORREF surface = active ? RGB(226, 238, 255) : theme::CARD;
-			surface = Blend(Blend(surface, active ? RGB(211, 230, 255) : RGB(234, 244, 255), hot),
-				RGB(195, 220, 255), press);
-			InflateRect(&r, -inset, -inset);
-			FillRoundRect(dc, r, S(7), surface, surface);
-			SetBkMode(dc, TRANSPARENT);
-			SetTextColor(dc, active ? theme::ACCENT_DN : Blend(theme::TEXT_SUB, theme::ACCENT_DN, hot));
-			HGDIOBJ prev = SelectObject(dc, iconFont);
+			FillRect(memDC, &local, (HBRUSH)GetStockObject(WHITE_BRUSH));
+			COLORREF surface = active ? theme::ACCENT_SOFT : theme::CARD;
+			surface = Blend(Blend(surface, active ? RGB(221, 234, 255) : theme::FIELD, hot),
+				RGB(205, 224, 255), press);
+			RECT pill = local;
+			InflateRect(&pill, -inset, -inset);
+			{
+				Gdiplus::Graphics g(memDC);
+				g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+				g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+				FillRoundRectAA(g, pill, (float)S(8), surface, active ? theme::ACCENT_BORDER : surface, 1.0f, false);
+				if (active) {
+					RECT bar = { pill.left + S(2), pill.top + S(9), pill.left + S(5), pill.bottom - S(9) };
+					FillRoundRectAA(g, bar, (float)S(2), theme::ACCENT, theme::ACCENT, 0.0f, false);
+				}
+			}
+			SetBkMode(memDC, TRANSPARENT);
+			SetTextColor(memDC, active ? theme::ACCENT_DN : Blend(theme::TEXT_SUB, theme::ACCENT, hot));
+			HGDIOBJ prev = SelectObject(memDC, iconFont);
 			const wchar_t glyphs[] = { 0xE968, 0xE8F1, 0xE9D9, 0xE713 };
-			RECT textBox = r;
+			RECT textBox = pill;
 			textBox.left += S(16);
-			DrawTextW(dc, &glyphs[id - NavService], 1, &textBox, DT_SINGLELINE | DT_VCENTER);
-			textBox.left += S(32);
-			SelectObject(dc, active ? g_font_sect : g_font_ui);
-			DrawTextW(dc, pageNames[id - NavService], -1, &textBox, DT_SINGLELINE | DT_VCENTER);
-			SelectObject(dc, prev);
-			if (dis->itemState & ODS_FOCUS) { InflateRect(&r, -3, -3); DrawFocusRect(dc, &r); }
+			DrawTextW(memDC, &glyphs[id - NavService], 1, &textBox, DT_SINGLELINE | DT_VCENTER);
+			textBox.left += S(30);
+			SelectObject(memDC, active ? g_font_sect : g_font_ui);
+			DrawTextW(memDC, pageNames[id - NavService], -1, &textBox, DT_SINGLELINE | DT_VCENTER);
+			SelectObject(memDC, prev);
+			if (dis->itemState & ODS_FOCUS) { InflateRect(&pill, -3, -3); DrawFocusRect(memDC, &pill); }
+			BitBlt(dc, r.left, r.top, w, h, memDC, 0, 0, SRCCOPY);
+			SelectObject(memDC, oldBmp);
+			DeleteObject(memBmp);
+			DeleteDC(memDC);
 			return;
 		}
-		// 主按钮（上线 / 转换 / 合并）用主色，其余为浅色
-		bool primary = (id == IDC_BTN_START || id == BankAdd);
+
+		bool primary = (id == IDC_BTN_START || id == BankAdd || id == MatchOpen);
+		bool copied = (id == IDC_BTN_COPY_LOCAL && g_copy_feedback_until[0])
+			|| (id == IDC_BTN_COPY_LAN && g_copy_feedback_until[1])
+			|| (id == IDC_BTN_COPY_PIN && g_copy_feedback_until[2]);
+		bool dangerOutline = (id == IDC_BTN_STOP);
 
 		COLORREF bg, fg, border;
-		if (disabled)
-		{
-			bg = RGB(0xED, 0xEF, 0xF2);
-			fg = RGB(0xAE, 0xB4, 0xBE);
-			border = RGB(0xE3, 0xE6, 0xEA);
-		}
-		else if (primary)
-		{
+		if (disabled) {
+			bg = theme::OFF_SOFT;
+			fg = theme::TEXT_MUTED;
+			border = theme::BORDER;
+		} else if (copied) {
+			bg = theme::ON_SOFT;
+			fg = theme::ON;
+			border = theme::ON_BORDER;
+		} else if (primary) {
 			bg = Blend(Blend(theme::ACCENT, theme::ACCENT_HOT, hot), theme::ACCENT_DN, press);
-			fg = RGB(0xFF, 0xFF, 0xFF);
+			fg = RGB(255, 255, 255);
 			border = bg;
-		}
-		else
-		{
-			bg = Blend(Blend(theme::CARD, RGB(236, 245, 255), hot), RGB(208, 229, 255), press);
+		} else if (dangerOutline) {
+			bg = Blend(Blend(theme::CARD, theme::WARN_SOFT, hot), RGB(254, 202, 202), press);
+			fg = Blend(theme::WARN, RGB(185, 28, 28), hot);
+			border = Blend(theme::BORDER, theme::WARN_BORDER, hot);
+		} else {
+			bg = Blend(Blend(theme::CARD, theme::ACCENT_SOFT, hot), RGB(212, 227, 252), press);
 			fg = Blend(theme::TEXT, theme::ACCENT_DN, hot);
-			border = Blend(theme::BORDER, RGB(138, 180, 238), hot);
+			border = Blend(theme::BORDER, theme::ACCENT_BORDER, hot);
 		}
 
-		// 底色（先铺满父窗口底色，再画圆角）
 		HBRUSH bgBr = CreateSolidBrush(theme::CARD);
-		FillRect(dc, &r, bgBr);
+		FillRect(memDC, &local, bgBr);
 		DeleteObject(bgBr);
 
-		RECT rr = r;
+		RECT rr = local;
 		InflateRect(&rr, -1 - inset, -1 - inset);
-		FillRoundRect(dc, rr, S(6), bg, border);
+		{
+			Gdiplus::Graphics g(memDC);
+			g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+			g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+			FillRoundRectAA(g, rr, (float)S(7), bg, border, 1.0f, false);
+		}
 
-		// 文字
 		wchar_t text[128] = { 0 };
 		GetWindowTextW(dis->hwndItem, text, 128);
 
-		SetBkMode(dc, TRANSPARENT);
-		SetTextColor(dc, fg);
-		HFONT old = (HFONT)SelectObject(dc, g_font_ui);
+		SetBkMode(memDC, TRANSPARENT);
+		SetTextColor(memDC, fg);
+		bool smallBtn = (id == IDC_BTN_COPY_LOCAL || id == IDC_BTN_COPY_LAN || id == IDC_BTN_COPY_PIN || id == BankClearSearch);
+		HFONT old = (HFONT)SelectObject(memDC, smallBtn && g_font_small ? g_font_small : g_font_ui);
 		OffsetRect(&rr, 0, int(S(1) * press + 0.5f));
-		DrawTextW(dc, text, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-		SelectObject(dc, old);
+		DrawTextW(memDC, text, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		SelectObject(memDC, old);
 
-		if (dis->itemState & ODS_FOCUS)
-		{
+		if (dis->itemState & ODS_FOCUS) {
 			RECT fr = rr;
 			InflateRect(&fr, -3, -3);
-			DrawFocusRect(dc, &fr);
+			DrawFocusRect(memDC, &fr);
 		}
+
+		BitBlt(dc, r.left, r.top, w, h, memDC, 0, 0, SRCCOPY);
+		SelectObject(memDC, oldBmp);
+		DeleteObject(memBmp);
+		DeleteDC(memDC);
 	}
 
-	// 画卡片背景与描边
+	// 双缓冲 + GDI+ 抗锯齿画卡片背景、阴影、描边与扁平输入容器
 	void DrawCard(HWND hwnd)
 	{
 		PAINTSTRUCT ps;
@@ -1026,19 +1453,60 @@ namespace
 
 		RECT rc;
 		GetClientRect(hwnd, &rc);
+		int w = rc.right - rc.left, h = rc.bottom - rc.top;
+		if (w <= 0 || h <= 0) {
+			EndPaint(hwnd, &ps);
+			return;
+		}
+
+		HDC memDC = CreateCompatibleDC(dc);
+		HBITMAP memBmp = CreateCompatibleBitmap(dc, w, h);
+		HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
+
 		HBRUSH bg = CreateSolidBrush(theme::BG);
-		FillRect(dc, &rc, bg);
+		FillRect(memDC, &rc, bg);
 		DeleteObject(bg);
 
 		RECT sidebar = { 0, 0, S(174), rc.bottom };
-		FillRect(dc, &sidebar, (HBRUSH)GetStockObject(WHITE_BRUSH));
+		FillRect(memDC, &sidebar, (HBRUSH)GetStockObject(WHITE_BRUSH));
 		HBRUSH line = CreateSolidBrush(theme::BORDER);
 		RECT divider = { sidebar.right - 1, 0, sidebar.right, rc.bottom };
-		FillRect(dc, &divider, line);
+		FillRect(memDC, &divider, line);
 		DeleteObject(line);
-		FillRoundRect(dc, g_panel, S(9), theme::CARD, theme::BORDER);
-		if (currentPage == NavService)
-			FillRoundRect(dc, g_card_log, S(9), theme::CARD, theme::BORDER);
+
+		{
+			Gdiplus::Graphics g(memDC);
+			g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+			g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+			FillRoundRectAA(g, g_panel, (float)S(12), theme::CARD, theme::BORDER, 1.0f, true);
+
+			if (currentPage == NavService) {
+				FillRoundRectAA(g, g_card_log, (float)S(12), theme::CARD, theme::BORDER, 1.0f, true);
+				FillRoundRectAA(g, g_box_url_local, (float)S(8), theme::FIELD, theme::BORDER, 1.0f, false);
+				FillRoundRectAA(g, g_box_url_lan, (float)S(8), theme::FIELD, theme::BORDER, 1.0f, false);
+				FillRoundRectAA(g, g_box_pin, (float)S(10), theme::ACCENT_SOFT, theme::ACCENT_BORDER, 1.0f, false);
+				FillRoundRectAA(g, g_box_log, (float)S(8), theme::FIELD, theme::BORDER, 1.0f, false);
+			} else if (currentPage == NavProblems) {
+				COLORREF sBorder = g_search_focused ? theme::ACCENT : theme::BORDER;
+				FillRoundRectAA(g, g_box_search, (float)S(8), theme::FIELD, sBorder, g_search_focused ? 1.5f : 1.0f, false);
+			}
+		}
+
+		if (currentPage == NavProblems && iconFont) {
+			SetBkMode(memDC, TRANSPARENT);
+			SetTextColor(memDC, g_search_focused ? theme::ACCENT : theme::TEXT_MUTED);
+			HGDIOBJ prev = SelectObject(memDC, iconFont);
+			RECT iconRc = { g_box_search.left + S(10), g_box_search.top, g_box_search.left + S(30), g_box_search.bottom };
+			const wchar_t searchGlyph = 0xE721;
+			DrawTextW(memDC, &searchGlyph, 1, &iconRc, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+			SelectObject(memDC, prev);
+		}
+
+		BitBlt(dc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
+		SelectObject(memDC, oldBmp);
+		DeleteObject(memBmp);
+		DeleteDC(memDC);
 
 		EndPaint(hwnd, &ps);
 	}
@@ -1049,6 +1517,7 @@ namespace
 		{
 		case WM_CREATE:
 		{
+			ApplyDwmTheme(hwnd);
 			CreateFonts();
 
 			Mk(hwnd, L"STATIC", L"Responder", SS_LEFT, 0, 0, 0, 0, Brand, g_font_title);
@@ -1077,25 +1546,28 @@ namespace
 			Mk(hwnd, L"STATIC", L"关闭后，可在服务管理中停留在当前日志位置。", SS_LEFT, 0, 0, 0, 0, SettingsHint, g_font_small);
 			followLog = GetPrivateProfileIntW(L"Window", L"FollowLog", 1, prefsFile) != 0;
 			CheckDlgButton(hwnd, AutoScroll, followLog ? BST_CHECKED : BST_UNCHECKED);
-			g_status = Mk(hwnd, L"STATIC", L"○ 已下线", SS_RIGHT | SS_CENTERIMAGE,
-				0, 0, 0, 0, IDC_STATUS, g_font_sect);
+			g_status = Mk(hwnd, L"STATIC", L"服务未启动", SS_OWNERDRAW,
+				0, 0, 0, 0, IDC_STATUS, g_font_small);
 
 			// ---- 服务状态卡片 ----
 			Mk(hwnd, L"STATIC", L"服务状态", SS_LEFT, 0, 0, 0, 0, IDC_STATIC_SVC, g_font_sect);
-			Mk(hwnd, L"STATIC", L"本机", SS_LEFT | SS_CENTERIMAGE, 0, 0, 0, 0, IDC_STATIC_URL1, g_font_ui);
-			Mk(hwnd, L"STATIC", L"局域网", SS_LEFT | SS_CENTERIMAGE, 0, 0, 0, 0, IDC_STATIC_URL2, g_font_ui);
+			Mk(hwnd, L"STATIC", L"本机地址", SS_LEFT | SS_CENTERIMAGE, 0, 0, 0, 0, IDC_STATIC_URL1, g_font_ui);
+			Mk(hwnd, L"STATIC", L"局域网地址", SS_LEFT | SS_CENTERIMAGE, 0, 0, 0, 0, IDC_STATIC_URL2, g_font_ui);
 			Mk(hwnd, L"STATIC", L"登录 PIN", SS_LEFT | SS_CENTERIMAGE, 0, 0, 0, 0, IDC_STATIC_PIN, g_font_ui);
 
 			g_url_local = Mk(hwnd, L"EDIT", L"—", ES_READONLY | ES_AUTOHSCROLL,
-				0, 0, 0, 0, IDC_URL_LOCAL, g_font_ui);
+				0, 0, 0, 0, IDC_URL_LOCAL, g_font_mono);
 			g_url_lan = Mk(hwnd, L"EDIT", L"—", ES_READONLY | ES_AUTOHSCROLL,
-				0, 0, 0, 0, IDC_URL_LAN, g_font_ui);
+				0, 0, 0, 0, IDC_URL_LAN, g_font_mono);
 			g_pin = Mk(hwnd, L"EDIT", L"—", ES_READONLY | ES_CENTER,
-				0, 0, 0, 0, IDC_LOGIN_PIN, g_font_pin, WS_EX_STATICEDGE);
+				0, 0, 0, 0, IDC_LOGIN_PIN, g_font_pin);
 
 			g_btn_start = Mk(hwnd, L"BUTTON", L"上线", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_START, g_font_ui);
 			g_btn_stop = Mk(hwnd, L"BUTTON", L"下线", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_STOP, g_font_ui);
 			g_btn_browser = Mk(hwnd, L"BUTTON", L"打开浏览器", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_BROWSER, g_font_ui);
+			g_btn_copy_local = Mk(hwnd, L"BUTTON", L"复制", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_COPY_LOCAL, g_font_small);
+			g_btn_copy_lan = Mk(hwnd, L"BUTTON", L"复制地址", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_COPY_LAN, g_font_small);
+			g_btn_copy_pin = Mk(hwnd, L"BUTTON", L"复制 PIN", BS_OWNERDRAW, 0, 0, 0, 0, IDC_BTN_COPY_PIN, g_font_small);
 
 			g_hint = Mk(hwnd, L"STATIC", L"点击「上线」后，前端电脑即可连接。", SS_LEFT,
 				0, 0, 0, 0, IDC_HINT, g_font_small);
@@ -1104,11 +1576,13 @@ namespace
 			Mk(hwnd, L"STATIC", L"题目列表", SS_LEFT, 0, 0, 0, 0, IDC_STATIC_PB1, g_font_sect);
 			Mk(hwnd, L"STATIC", L"搜索", SS_LEFT, 0, 0, 0, 0, BankSearchLabel, g_font_ui);
 			HWND search = Mk(hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL,
-				0, 0, 0, 0, BankSearch, g_font_ui, WS_EX_CLIENTEDGE);
-			SendMessageW(search, EM_SETCUEBANNER, FALSE, (LPARAM)L"题号、题干、答案、选项或线索");
-			Mk(hwnd, L"BUTTON", L"清空", BS_OWNERDRAW, 0, 0, 0, 0, BankClearSearch, g_font_ui);
+				0, 0, 0, 0, BankSearch, g_font_ui);
+			SendMessageW(search, EM_SETCUEBANNER, FALSE, (LPARAM)L"搜索题号、题干、答案、选项或线索");
+			Mk(hwnd, L"BUTTON", L"清空", BS_OWNERDRAW, 0, 0, 0, 0, BankClearSearch, g_font_small);
 			HWND filter = Mk(hwnd, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL,
 				0, 0, 0, 0, BankFilter, g_font_ui);
+			SetWindowTheme(filter, L"Explorer", nullptr);
+			SendMessageW(filter, CB_SETITEMHEIGHT, (WPARAM)-1, S(24));
 			SendMessageW(filter, CB_ADDSTRING, 0, (LPARAM)L"全部题型");
 			for (auto name : typeNames) SendMessageW(filter, CB_ADDSTRING, 0, (LPARAM)name);
 			SendMessageW(filter, CB_SETCURSEL, 0, 0);
@@ -1160,8 +1634,8 @@ namespace
 		case WM_GETMINMAXINFO:
 		{
 			MINMAXINFO* mmi = (MINMAXINFO*)lp;
-			mmi->ptMinTrackSize.x = S(720);
-			mmi->ptMinTrackSize.y = S(520);
+			mmi->ptMinTrackSize.x = S(760);
+			mmi->ptMinTrackSize.y = S(560);
 			return 0;
 		}
 
@@ -1186,13 +1660,6 @@ namespace
 			int ctlId = GetDlgCtrlID(ctl);
 			if (ctlId == Brand || ctl == g_pin) SetTextColor(dc, theme::ACCENT);
 			else if (ctlId == IDC_TITLE || ctlId == IDC_STATIC_SVC || ctlId == IDC_STATIC_PB1 || ctlId == MatchTitle || ctlId == SettingsTitle || ctlId == IDC_STATIC_LOG || ctl == g_log) SetTextColor(dc, theme::TEXT);
-			else if (ctl == g_status)
-			{
-				if (server_core::is_running())
-					SetTextColor(dc, theme::ON);
-				else
-					SetTextColor(dc, server_core::last_error().empty() ? theme::OFF : theme::WARN);
-			}
 			else if (ctl == g_hint)
 			{
 				SetTextColor(dc, server_core::last_error().empty() ? theme::TEXT_SUB : theme::WARN);
@@ -1205,9 +1672,30 @@ namespace
 			{
 				SetTextColor(dc, theme::TEXT_SUB);
 			}
-			if (ctlId == IDC_TITLE || ctl == g_status) {
+			if (ctlId == IDC_TITLE) {
 				static HBRUSH header = CreateSolidBrush(theme::BG);
 				return (LRESULT)header;
+			}
+			if (ctl == g_url_local || ctl == g_url_lan) {
+				SetBkMode(dc, OPAQUE);
+				SetBkColor(dc, theme::FIELD);
+				SetTextColor(dc, theme::TEXT);
+				static HBRUSH roFieldBr = CreateSolidBrush(theme::FIELD);
+				return (LRESULT)roFieldBr;
+			}
+			if (ctl == g_pin) {
+				SetBkMode(dc, OPAQUE);
+				SetBkColor(dc, theme::ACCENT_SOFT);
+				SetTextColor(dc, theme::ACCENT_DN);
+				static HBRUSH roPinBr = CreateSolidBrush(theme::ACCENT_SOFT);
+				return (LRESULT)roPinBr;
+			}
+			if (ctl == g_log) {
+				SetBkMode(dc, OPAQUE);
+				SetBkColor(dc, theme::FIELD);
+				SetTextColor(dc, theme::TEXT);
+				static HBRUSH roLogBr = CreateSolidBrush(theme::FIELD);
+				return (LRESULT)roLogBr;
 			}
 			// 返回卡片底色画刷，避免文字下面残留窗口底色
 			static HBRUSH cardBr = CreateSolidBrush(theme::CARD);
@@ -1238,20 +1726,20 @@ namespace
 			SetBkMode(dc, OPAQUE);
 			if (ctl == g_log)
 			{
-				SetBkColor(dc, theme::CARD);
+				SetBkColor(dc, theme::FIELD);
 				SetTextColor(dc, theme::TEXT);
-				static HBRUSH logBr = CreateSolidBrush(theme::CARD);
+				static HBRUSH logBr = CreateSolidBrush(theme::FIELD);
 				return (LRESULT)logBr;
 			}
 			if (ctl == g_pin)
 			{
-				// PIN 用主色突出，方便一眼读到
-				SetBkColor(dc, theme::FIELD);
-				SetTextColor(dc, theme::ACCENT);
-				static HBRUSH pinBr = CreateSolidBrush(theme::FIELD);
+				// PIN 用浅蓝胶囊底 + 深蓝大字突出
+				SetBkColor(dc, theme::ACCENT_SOFT);
+				SetTextColor(dc, theme::ACCENT_DN);
+				static HBRUSH pinBr = CreateSolidBrush(theme::ACCENT_SOFT);
 				return (LRESULT)pinBr;
 			}
-			// 访问地址等只读框：深色文字、浅灰底
+			// 访问地址与搜索框：深色文字、浅灰底
 			SetBkColor(dc, theme::FIELD);
 			SetTextColor(dc, theme::TEXT);
 			static HBRUSH fieldBr = CreateSolidBrush(theme::FIELD);
@@ -1290,6 +1778,10 @@ namespace
 				if (HIWORD(wp) == CBN_SELCHANGE && !g_op_running) RefreshBank(hwnd);
 				return 0;
 			case BankSearch:
+				if (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS) {
+					g_search_focused = (HIWORD(wp) == EN_SETFOCUS);
+					InvalidateRect(hwnd, &g_box_search, FALSE);
+				}
 				if (HIWORD(wp) == EN_CHANGE && currentPage == NavProblems && !g_op_running)
 					RefreshBank(hwnd);
 				return 0;
@@ -1313,6 +1805,21 @@ namespace
 
 			case IDC_BTN_STOP:
 				DoStop();
+				return 0;
+
+			case IDC_BTN_COPY_LOCAL:
+				if (CopyTextToClipboard(hwnd, GetText(g_url_local)))
+					TriggerCopyFeedback(hwnd, 0, IDC_BTN_COPY_LOCAL);
+				return 0;
+
+			case IDC_BTN_COPY_LAN:
+				if (CopyTextToClipboard(hwnd, GetText(g_url_lan)))
+					TriggerCopyFeedback(hwnd, 1, IDC_BTN_COPY_LAN);
+				return 0;
+
+			case IDC_BTN_COPY_PIN:
+				if (CopyTextToClipboard(hwnd, GetText(g_pin)))
+					TriggerCopyFeedback(hwnd, 2, IDC_BTN_COPY_PIN);
 				return 0;
 
 			case MatchOpen:
@@ -1398,27 +1905,40 @@ int RunGui()
 {
 	InitDpiScale();
 
+	Gdiplus::GdiplusStartupInput gdipInput;
+	ULONG_PTR gdipToken = 0;
+	Gdiplus::GdiplusStartup(&gdipToken, &gdipInput, nullptr);
+
 	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES };
 	InitCommonControlsEx(&icc);
+
+	HINSTANCE hInst = GetModuleHandleW(nullptr);
+	HICON hBigIcon = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
+		GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+	HICON hSmIcon = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
+		GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+	if (!hBigIcon) hBigIcon = (HICON)LoadImageW(nullptr, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_SHARED);
+	if (!hSmIcon) hSmIcon = hBigIcon;
 
 	WNDCLASSEXW wc = { 0 };
 	wc.cbSize = sizeof(wc);
 	wc.style = CS_HREDRAW | CS_VREDRAW;
 	wc.lpfnWndProc = WndProc;
-	wc.hInstance = GetModuleHandleW(nullptr);
+	wc.hInstance = hInst;
 	wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
 	wc.hbrBackground = CreateSolidBrush(theme::BG);
 	wc.lpszClassName = L"ResponderManagerWnd";
-	wc.hIcon = (HICON)LoadImageW(nullptr, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_SHARED);
-	wc.hIconSm = wc.hIcon;
+	wc.hIcon = hBigIcon;
+	wc.hIconSm = hSmIcon;
 	if (!RegisterClassExW(&wc))
 	{
+		if (gdipToken) Gdiplus::GdiplusShutdown(gdipToken);
 		MessageBoxW(nullptr, L"窗口类注册失败。", L"错误", MB_ICONERROR);
 		return 1;
 	}
 
 	// 屏幕居中。窗口含标题栏，客户区按缩放后的尺寸预留
-	const int clientW = S(940), clientH = S(620);
+	const int clientW = S(960), clientH = S(640);
 	RECT want = { 0, 0, clientW, clientH };
 	AdjustWindowRectEx(&want, WS_OVERLAPPEDWINDOW, FALSE, 0);
 	int ww = want.right - want.left, wh = want.bottom - want.top;
@@ -1440,15 +1960,19 @@ int RunGui()
 		WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, ww, wh, nullptr, nullptr, wc.hInstance, nullptr);
 	if (!hwnd)
 	{
+		if (gdipToken) Gdiplus::GdiplusShutdown(gdipToken);
 		MessageBoxW(nullptr, L"窗口创建失败。", L"错误", MB_ICONERROR);
 		return 1;
 	}
+	if (hBigIcon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hBigIcon);
+	if (hSmIcon) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hSmIcon);
 
 	ShowWindow(hwnd, SW_SHOW);
 	UpdateWindow(hwnd);
 
 	// 消息循环：100ms 超时轮询，刷新日志与服务状态
 	MSG msg;
+	int exitCode = 0;
 	for (;;)
 	{
 		DWORD r = MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -1465,8 +1989,11 @@ int RunGui()
 		}
 		while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
-			if (msg.message == WM_QUIT)
-				return (int)msg.wParam;
+			if (msg.message == WM_QUIT) {
+				exitCode = (int)msg.wParam;
+				if (gdipToken) Gdiplus::GdiplusShutdown(gdipToken);
+				return exitCode;
+			}
 			if (msg.message == WM_KEYDOWN && (msg.wParam == VK_TAB || msg.wParam == VK_RETURN) && IsDialogMessageW(hwnd, &msg)) continue;
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
