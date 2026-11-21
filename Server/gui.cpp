@@ -1915,6 +1915,20 @@ namespace
 		return CDRF_DODEFAULT;
 	}
 
+	// SysHeader32 的 NM_CUSTOMDRAW 发给其直接父窗口 ListView，需在 ListView 子类过程里拦截
+	LRESULT CALLBACK ListHeaderSubclass(HWND list, UINT msg, WPARAM wp, LPARAM lp,
+		UINT_PTR subclass, DWORD_PTR)
+	{
+		if (msg == WM_NOTIFY) {
+			auto* note = reinterpret_cast<NMHDR*>(lp);
+			if (note && note->code == NM_CUSTOMDRAW && note->hwndFrom == ListView_GetHeader(list))
+				return DrawListHeader(reinterpret_cast<NMCUSTOMDRAW*>(lp));
+		} else if (msg == WM_NCDESTROY) {
+			RemoveWindowSubclass(list, ListHeaderSubclass, subclass);
+		}
+		return DefSubclassProc(list, msg, wp, lp);
+	}
+
 	LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 	{
 		switch (msg)
@@ -1941,6 +1955,7 @@ namespace
 			ListView_SetBkColor(list, theme::CARD);
 			ListView_SetTextBkColor(list, theme::CARD);
 			ListView_SetTextColor(list, theme::TEXT);
+			SetWindowSubclass(list, ListHeaderSubclass, 1, 0);
 			const wchar_t* columns[] = { L"比赛名称", L"比赛状态", L"队伍数" };
 			for (int i = 0; i < 3; ++i) {
 				LVCOLUMNW col{};
@@ -1999,6 +2014,7 @@ namespace
 			ListView_SetBkColor(bank, theme::CARD);
 			ListView_SetTextBkColor(bank, theme::CARD);
 			ListView_SetTextColor(bank, theme::TEXT);
+			SetWindowSubclass(bank, ListHeaderSubclass, 1, 0);
 			const wchar_t* bankColumns[] = { L"题号", L"题型", L"题干", L"难度", L"状态" };
 			for (int i = 0; i < 5; ++i) {
 				LVCOLUMNW col{};
@@ -2174,12 +2190,6 @@ namespace
 		case WM_NOTIFY:
 		{
 			auto* note = (NMHDR*)lp;
-			if (note->code == NM_CUSTOMDRAW) {
-				HWND bankHdr = ListView_GetHeader(GetDlgItem(hwnd, BankList));
-				HWND matchHdr = ListView_GetHeader(GetDlgItem(hwnd, MatchList));
-				if (note->hwndFrom && (note->hwndFrom == bankHdr || note->hwndFrom == matchHdr))
-					return DrawListHeader((NMCUSTOMDRAW*)lp);
-			}
 			if (note->idFrom == BankList) {
 				if (note->code == LVN_ITEMCHANGED)
 					EnableWindow(GetDlgItem(hwnd, BankEdit), !g_op_running && ListView_GetNextItem(note->hwndFrom, -1, LVNI_SELECTED) >= 0);
