@@ -96,13 +96,41 @@ static int S(int v)
 	return (int)(v * g_scale + 0.5);
 }
 
-static void InitDpiScale()
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
+
+static UINT GetWindowDpi(HWND hwnd)
 {
+	if (hwnd) {
+		if (HMODULE u32 = GetModuleHandleW(L"user32.dll")) {
+			typedef UINT(WINAPI* GetDpiFn)(HWND);
+			auto fn = (GetDpiFn)GetProcAddress(u32, "GetDpiForWindow");
+			if (fn) {
+				UINT dpi = fn(hwnd);
+				if (dpi > 0) return dpi;
+			}
+		}
+	}
 	HDC dc = GetDC(nullptr);
 	int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
 	if (dc) ReleaseDC(nullptr, dc);
-	if (dpi <= 0) dpi = 96;
-	g_scale = dpi / 96.0;
+	return dpi > 0 ? (UINT)dpi : 96;
+}
+
+static int GetMetricForDpi(int index, UINT dpi)
+{
+	if (HMODULE u32 = GetModuleHandleW(L"user32.dll")) {
+		typedef int(WINAPI* GetMetFn)(int, UINT);
+		auto fn = (GetMetFn)GetProcAddress(u32, "GetSystemMetricsForDpi");
+		if (fn) return fn(index, dpi);
+	}
+	return GetSystemMetrics(index);
+}
+
+static void InitDpiScale()
+{
+	g_scale = GetWindowDpi(nullptr) / 96.0;
 }
 
 // ===== 配色（与网页端 / 比赛大屏统一设计系统）=====
@@ -750,8 +778,9 @@ namespace
 			auto* form = reinterpret_cast<QuestionForm*>(lp);
 			SetWindowLongPtrW(dlg, DWLP_USER, lp);
 			ApplyDwmTheme(dlg);
+			UINT dlgDpi = GetWindowDpi(dlg);
 			HICON hSm = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
-				GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+				GetMetricForDpi(SM_CXSMICON, dlgDpi), GetMetricForDpi(SM_CYSMICON, dlgDpi), LR_DEFAULTCOLOR);
 			if (hSm) SendMessageW(dlg, WM_SETICON, ICON_SMALL, (LPARAM)hSm);
 
 			const auto& q = form->original;
@@ -1367,6 +1396,58 @@ namespace
 		g_font_mono  = make(-13, FW_NORMAL, L"Consolas");
 	}
 
+	void DestroyFonts()
+	{
+		auto del = [](HFONT& f) { if (f) { DeleteObject(f); f = nullptr; } };
+		del(iconFont);
+		del(g_font_ui);
+		del(g_font_small);
+		del(g_font_sect);
+		del(g_font_title);
+		del(g_font_pin);
+		del(g_font_stat);
+		del(g_font_mono);
+	}
+
+	void ApplyFonts(HWND hwnd)
+	{
+		auto setF = [&](int id, HFONT f) {
+			if (HWND c = GetDlgItem(hwnd, id))
+				SendMessageW(c, WM_SETFONT, (WPARAM)f, FALSE);
+		};
+		for (int id : { Brand, IDC_TITLE }) setF(id, g_font_title);
+		for (int id : { MatchTitle, SettingsTitle, IDC_STATIC_SVC, IDC_STATIC_PB1, IDC_STATIC_LOG }) setF(id, g_font_sect);
+		for (int id : { BrandCaption, MatchHint, SettingsHint, IDC_STATUS, IDC_BTN_COPY_LOCAL, IDC_BTN_COPY_LAN, IDC_BTN_COPY_PIN,
+				IDC_HINT, BankClearSearch, IDC_STATIC_PB2 }) setF(id, g_font_small);
+		for (int id : { NavService, NavProblems, NavMatches, NavSettings, MatchOpen, MatchRefresh, MatchList, AutoScroll,
+				IDC_STATIC_URL1, IDC_STATIC_URL2, IDC_STATIC_PIN, IDC_BTN_START, IDC_BTN_STOP, IDC_BTN_BROWSER,
+				BankSearchLabel, BankSearch, BankFilter, BankEdit, BankAdd, BankList,
+				IDC_BTN_CONVERT, IDC_BTN_MERGE, IDC_BTN_DEDUP, IDC_BTN_BACKUP }) setF(id, g_font_ui);
+		setF(IDC_STATS, g_font_stat);
+		setF(IDC_LOGIN_PIN, g_font_pin);
+		for (int id : { IDC_URL_LOCAL, IDC_URL_LAN, IDC_LOG }) setF(id, g_font_mono);
+	}
+
+	void UpdateWindowIcons(HWND hwnd, UINT dpi)
+	{
+		static HICON s_bigIcon = nullptr, s_smIcon = nullptr;
+		HINSTANCE hInst = GetModuleHandleW(nullptr);
+		HICON bigIc = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
+			GetMetricForDpi(SM_CXICON, dpi), GetMetricForDpi(SM_CYICON, dpi), LR_DEFAULTCOLOR);
+		HICON smIc = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_RESPONDER), IMAGE_ICON,
+			GetMetricForDpi(SM_CXSMICON, dpi), GetMetricForDpi(SM_CYSMICON, dpi), LR_DEFAULTCOLOR);
+		if (bigIc) {
+			SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)bigIc);
+			if (s_bigIcon && s_bigIcon != bigIc) DestroyIcon(s_bigIcon);
+			s_bigIcon = bigIc;
+		}
+		if (smIc) {
+			SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)smIc);
+			if (s_smIcon && s_smIcon != smIc) DestroyIcon(s_smIcon);
+			s_smIcon = smIc;
+		}
+	}
+
 	struct ButtonMotion {
 		float hover = 0, press = 0;
 		bool inside = false, down = false;
@@ -1794,6 +1875,15 @@ namespace
 			SendMessageW(header, HDM_GETITEMW, (WPARAM)cd->dwItemSpec, (LPARAM)&item);
 
 			RECT rc = cd->rc;
+			HBRUSH itemBg = CreateSolidBrush(theme::FIELD);
+			FillRect(cd->hdc, &rc, itemBg);
+			DeleteObject(itemBg);
+			HPEN btm = CreatePen(PS_SOLID, 1, theme::BORDER);
+			HGDIOBJ oldBtmPen = SelectObject(cd->hdc, btm);
+			MoveToEx(cd->hdc, rc.left, rc.bottom - 1, nullptr);
+			LineTo(cd->hdc, rc.right, rc.bottom - 1);
+			SelectObject(cd->hdc, oldBtmPen);
+			DeleteObject(btm);
 			// 分隔线：除首列外，在列左侧画一条短竖线
 			if (cd->dwItemSpec > 0) {
 				HPEN sep = CreatePen(PS_SOLID, 1, theme::BORDER);
@@ -1822,6 +1912,7 @@ namespace
 		{
 		case WM_CREATE:
 		{
+			g_scale = GetWindowDpi(hwnd) / 96.0;
 			ApplyDwmTheme(hwnd);
 			CreateFonts();
 
@@ -1936,6 +2027,25 @@ namespace
 				InvalidateRect(hwnd, nullptr, TRUE);
 			}
 			return 0;
+
+		case WM_DPICHANGED:
+		{
+			UINT dpi = HIWORD(wp);
+			if (dpi == 0) dpi = GetWindowDpi(hwnd);
+			g_scale = dpi / 96.0;
+			DestroyFonts();
+			CreateFonts();
+			ApplyFonts(hwnd);
+			UpdateWindowIcons(hwnd, dpi);
+			if (const RECT* rc = reinterpret_cast<const RECT*>(lp)) {
+				SetWindowPos(hwnd, nullptr, rc->left, rc->top,
+					rc->right - rc->left, rc->bottom - rc->top,
+					SWP_NOZORDER | SWP_NOACTIVATE);
+			}
+			LayoutControls(hwnd);
+			InvalidateRect(hwnd, nullptr, TRUE);
+			return 0;
+		}
 
 		case WM_GETMINMAXINFO:
 		{
@@ -2205,14 +2315,7 @@ namespace
 		}
 
 		case WM_DESTROY:
-			if (iconFont) DeleteObject(iconFont);
-			if (g_font_ui) DeleteObject(g_font_ui);
-			if (g_font_small) DeleteObject(g_font_small);
-			if (g_font_sect) DeleteObject(g_font_sect);
-			if (g_font_title) DeleteObject(g_font_title);
-			if (g_font_pin) DeleteObject(g_font_pin);
-			if (g_font_stat) DeleteObject(g_font_stat);
-			if (g_font_mono) DeleteObject(g_font_mono);
+			DestroyFonts();
 			PostQuitMessage(0);
 			return 0;
 		}
