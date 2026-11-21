@@ -124,7 +124,7 @@ namespace
 void new_competition_page::init()
 {
     address = "/main/competition/new";
-    browser_title = "新建比赛 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "新建比赛 - Responder";
     breadcrumb = R"(<li><a href="/main">主页</a></li><li>新建比赛</li>)";
     page_title = "新建比赛";
 
@@ -369,7 +369,7 @@ void competition_edit_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 编辑比赛 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = c.name + " - 编辑比赛 - Responder";
     breadcrumb = R"(<li><a href="/main">主页</a></li><li><a href="/main/competition/detail?guid=)" + c.guid + R"(">)" + c.name + R"(</a></li><li>编辑比赛</li>)";
     page_title = "<b>" + c.name + "</b> - 编辑比赛";
 
@@ -700,7 +700,7 @@ void competition_detail_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 比赛详情 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = c.name + " - 比赛详情 - Responder";
     breadcrumb = R"(<li><a href="/main">主页</a></li><li>比赛详情</li>)";
     page_title = "<b>" + c.name + "</b> - 比赛详情";
 
@@ -927,7 +927,7 @@ void competition_display_page::generate_page()
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
 
-  <title>)" + c.name + R"( - 比赛进行中 - Responder | 简单易用的知识竞赛组织系统</title>
+  <title>)" + c.name + R"( - 比赛大屏 - Responder</title>
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
 
   <!-- Local Fonts -->
@@ -985,16 +985,16 @@ void competition_display_page::generate_page()
             <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem() " id="reshowproblem" disabled>
               <i class="bi bi-arrow-counterclockwise"></i> 重新显示上一题
             </button>
-            <button class="btn btn-primary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>
+            <button class="btn btn-outline-secondary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>
               <i class="bi bi-lightbulb"></i> 下一信息
             </button>
-            <button class="btn btn-danger btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>
+            <button class="btn btn-outline-primary btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>
               <i class="bi bi-eye"></i> 显示答案
             </button>
 
             <div class="btn-group">
-              <button class="btn btn-success btn-sm" id="nextproblem" onclick="buttonNextProblem() ">下一选择题</button>
-              <button class="btn btn-success btn-sm" id="problemsettings" data-bs-toggle="modal" data-bs-target="#modalQuestionSettings" title="题目设置"><i class="bi bi-gear-fill"></i></button>
+              <button class="btn btn-primary btn-sm" id="nextproblem" onclick="buttonNextProblem() ">下一选择题</button>
+              <button class="btn btn-primary btn-sm" id="problemsettings" data-bs-toggle="modal" data-bs-target="#modalQuestionSettings" title="题目设置"><i class="bi bi-gear-fill"></i></button>
             </div>
           </div>
         </div>
@@ -1080,7 +1080,7 @@ void competition_display_page::generate_page()
           <div id="waitingarea" class="quiz-center">
             <div class="quiz-waiting-icon"><i class="bi bi-easel2"></i></div>
             <h1>比赛即将开始，请耐心等待</h1>
-            <p>点击上方「下一题」按钮开始答题</p>
+            <p>点击上方「下一选择题」或齿轮设置题型后开始答题</p>
           </div>
         </div>
       </section>

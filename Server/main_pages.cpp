@@ -15,7 +15,7 @@ void welcome_page::init()
 {
     is_index_page = false;
     address = "/";
-    browser_title = "欢迎 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "欢迎 - Responder";
 
 	is_request_login = false;
 }
@@ -65,7 +65,7 @@ void start_page::init()
 {
     is_index_page = false;
     address = "/start";
-    browser_title = "开始 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "开始 - Responder";
     breadcrumb = "";
     page_title = "开始";
 
@@ -162,7 +162,7 @@ std::string login_handler::generate_response()
 void main_page::init()
 {
     address = "/main";
-    browser_title = "主页 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "主页 - Responder";
     breadcrumb = "";
     page_title = "控制台主页";
 
@@ -251,7 +251,7 @@ void main_page::generate_page()
     <div class="console-card w-100">
       <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
         <h3 class="mb-0 border-0 pb-0" style="font-size:16px;font-weight:700;">比赛列表</h3>
-        <a href="/main/competition/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> 新建比赛</a>
+        <a href="/main/competition/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 新建比赛</a>
       </div>
       <div style="overflow:auto; max-height:260px">
       <table class="table table-hover">

@@ -101,7 +101,7 @@ namespace
 void problem_manage_page::init()
 {
 	address = "/main/problems";
-	browser_title = "题库管理 - Responder | 简单易用的知识竞赛组织系统";
+	browser_title = "题库管理 - Responder";
 	breadcrumb = R"(<li><a href="/main">主页</a></li><li>题库管理</li>)";
 	page_title = "题库管理";
 
@@ -221,7 +221,7 @@ void problem_manage_page::generate_page()
 void problem_manage_handler::init()
 {
 	address = "/main/problems";
-	browser_title = "题库管理 - Responder | 简单易用的知识竞赛组织系统";
+	browser_title = "题库管理 - Responder";
 	breadcrumb = R"(<li><a href="/main">主页</a></li><li>题库管理</li>)";
 	page_title = "题库管理";
 
