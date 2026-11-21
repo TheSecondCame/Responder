@@ -1199,15 +1199,6 @@ function reshowLastProblem() {
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
                 if (parseSessionSaveFailure(res)) {
-                    if (!pendingUnsavedDraw && LastProblemID > 0 && LastProblemType >= 0 && LastProblemType <= 2) {
-                        pendingUnsavedDraw = {
-                            type: LastProblemType,
-                            id: LastProblemID,
-                            autoScoring: IsAutoScoring == 1,
-                            responderTimerMode: ResponderTimerMode,
-                            roundFlowActive: (IsAutoScoring == 1 && IsRoundFlowRunning == 1)
-                        };
-                    }
                     notyf.error("会话快照保存失败，请检查磁盘或权限后再次点击「重新显示上一题」重试（不会消耗新题）。");
                 } else {
                     notyf.error("没有可重新显示的上一题。");

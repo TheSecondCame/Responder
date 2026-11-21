@@ -536,11 +536,107 @@ async function testAutoRoundWithTimeBeforeCountdownAndCorrectAnswer() {
     assert.strictEqual(ctx.ProblemID, 2);
 }
 
+// Scenario 5: Normal reshow failure on an already-displayed & revealed problem (e.g. Q3 with id=5)
+// must preserve ProblemID, answer visibility, timer, and scoring state across failure -> retry
+async function testNormalReshowFailureOnRevealedProblemPreservesState() {
+    for (const modeCfg of [
+        { name: 'responder', responderTimerMode: 1 },
+        { name: 'round', responderTimerMode: 0 }
+    ]) {
+        const h = createHarness({
+            scores: [2, 1, 0]
+        });
+        const ctx = h.context;
+        ctx.IsAutoScoring = 1;
+        ctx.ResponderTimerMode = modeCfg.responderTimerMode;
+        ctx.timeBefore = 3;
+        ctx.timeAfter = 15;
+        ctx.ProblemID = 3;
+        ctx.CurrentProblemType = 0;
+        ctx.CurrentProblemID = 5;
+        ctx.LastProblemType = 0;
+        ctx.LastProblemID = 5;
+        ctx.SelectedTeam = 1;
+        ctx.Team_Problems_Count = 1;
+        ctx.Round_Team = 2;
+        ctx.Round_Team_Cnt = 2;
+        ctx.Round_Count = 1;
+        ctx.IsRoundFlowRunning = 0;
+        ctx.IsResponderFlowRunning = 0;
+        ctx.applyRenderedProblem(makeProblemHtml(5, 0), 0, {
+            problemNumber: 3,
+            infoId: 0,
+            showAnswer: false,
+            discarded: false
+        });
+        ctx.ShowAnswer();
+
+        assert.strictEqual(ctx.ProblemID, 3);
+        assert.strictEqual(ctx.IsShowAnswer, 1);
+        assert.strictEqual(h.getEl('ansarea').style.display, 'block');
+        assert.strictEqual(h.getEl('showanswer').disabled, true);
+        assert.strictEqual(ctx.isConfirmPending, true);
+
+        let failWrite = true;
+        let reshowCalls = 0;
+        let drawCalls = 0;
+        let scorePosts = 0;
+        h.setAjaxHandler((opts) => {
+            if (opts.url.startsWith('/main/competition/display/problem')) {
+                if (opts.url.includes('reshow=1')) {
+                    reshowCalls++;
+                    assert.strictEqual(opts.data, '');
+                    if (failWrite) {
+                        return 'fail : session_save_failed|0|5';
+                    }
+                    return makeProblemHtml(5, 0);
+                }
+                drawCalls++;
+                return '';
+            }
+            if (opts.url.startsWith('/main/competition/display/scores')) {
+                scorePosts++;
+                return 'success';
+            }
+            return 'success';
+        });
+
+        // First reshow fails snapshot save
+        ctx.reshowLastProblem();
+        assert.strictEqual(reshowCalls, 1);
+        assert.strictEqual(ctx.pendingUnsavedDraw, null, `(${modeCfg.name}) normal reshow failure must not set pendingUnsavedDraw`);
+        assert.strictEqual(ctx.ProblemID, 3);
+        assert.strictEqual(ctx.IsShowAnswer, 1);
+
+        // Second reshow succeeds
+        failWrite = false;
+        ctx.reshowLastProblem();
+        assert.strictEqual(reshowCalls, 2);
+        assert.strictEqual(drawCalls, 0);
+        assert.strictEqual(scorePosts, 0);
+        assert.strictEqual(ctx.pendingUnsavedDraw, null);
+        assert.strictEqual(ctx.ProblemID, 3, `(${modeCfg.name}) ProblemID must remain 3`);
+        assert.strictEqual(h.getEl('problemtitle').innerHTML, '第3题');
+        assert.strictEqual(ctx.CurrentProblemID, 5);
+        assert.strictEqual(ctx.IsShowAnswer, 1, `(${modeCfg.name}) answer visibility must stay revealed`);
+        assert.strictEqual(h.getEl('ansarea').style.display, 'block');
+        assert.strictEqual(h.getEl('showanswer').disabled, true);
+        assert.strictEqual(ctx.IsStarted, 0, `(${modeCfg.name}) timer must remain stopped`);
+        assert.strictEqual(ctx.IsResponderFlowRunning, 0, `(${modeCfg.name}) ResponderFlow must not start`);
+        assert.strictEqual(ctx.IsRoundFlowRunning, 0, `(${modeCfg.name}) RoundFlow must not start`);
+        assert.strictEqual(ctx.Team_Problems_Count, 1, `(${modeCfg.name}) Team_Problems_Count must stay 1`);
+        assert.strictEqual(ctx.Round_Team, 2);
+        assert.deepStrictEqual(Array.from(ctx.scores), [2, 1, 0]);
+        assert.strictEqual(ctx.isConfirmPending, true);
+    }
+}
+
 (async () => {
     await testAutoRoundFailureRecoveryAndNextTeam();
     await testAutoRoundF5RefreshBeforeRetry();
     await testResponderModeFailureRecovery();
     await testAutoRoundWithTimeBeforeCountdownAndCorrectAnswer();
+    await testNormalReshowFailureOnRevealedProblemPreservesState();
     console.log('All JS display flow tests passed.');
 })().catch((err) => {
     console.error(err);
