@@ -94,13 +94,26 @@ jobs:
           node .\tests\display_flow_test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Create and unpack deployment ZIP
+        shell: pwsh
+        run: |
+          ./publish.ps1
+          Expand-Archive -LiteralPath Responder-x64.zip -DestinationPath build_publish
+
       - name: Run Server.exe HTTP smoke test
         shell: pwsh
-        run: pwsh -File .\tests\smoke_test.ps1 -ExePath .\x64\Release\Server.exe -AssetsDir .\assets
+        run: pwsh -File .\tests\smoke_test.ps1 -ExePath .\build_publish\Server.exe -AssetsDir .\build_publish\assets
 
       - name: Upload Release Server.exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: Responder-Server-x64-Release
           path: x64/Release/Server.exe
+          if-no-files-found: error
+
+      - name: Upload deployment ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Responder-x64-deployment
+          path: Responder-x64.zip
           if-no-files-found: error
