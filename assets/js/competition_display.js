@@ -366,7 +366,7 @@ function RoundFlow() {
     if (IsRoundFlowRunning == 1) { // 正在进行轮答流程，停止并重置
         Interval_Stop();
         Interval_setTime(timeBefore);
-        if (RoundAnswering == 0) { // 题目没有展示
+        if (RoundAnswering == 0 && !pendingUnsavedDraw) { // 题目没有展示
             // 视为本组还未作答
             RoundDelay();
         }
@@ -634,6 +634,7 @@ function buttonSwitchTimerMode() {
 }
 function SwitchTimerMode(ID) {
     SelectedTeam = 0;
+    pendingUnsavedDraw = null;
 
     if (ID == 0) { // 切换到倒计时，若开启自动计分则切换到轮答模式
         if (IsResponderFlowRunning == 1) ResponderFlow();
@@ -1018,7 +1019,7 @@ var CurrentProblemType = -1;
 var LastProblemType = (typeof last_problem_type !== 'undefined') ? last_problem_type : -1;
 var LastProblemID = (typeof last_problem_id !== 'undefined') ? last_problem_id : 0;
 var CurrentProblemID = 0;
-var pendingUnsavedDraw = false;
+var pendingUnsavedDraw = null;
 var IsDiscarded = 0;
 var IsShowAnswer = 1;
 
@@ -1123,6 +1124,67 @@ function applyRenderedProblem(html, type, opts) {
     document.getElementById('problemarea').style.display = "block";
 }
 
+function completeDrawnProblemPresentation(res, type, flowOptions) {
+    flowOptions = flowOptions || {};
+    if (flowOptions.roundFlowActive && IsAutoScoring == 1 && ResponderTimerMode == 0 && IsRoundFlowRunning == 0) {
+        IsRoundFlowRunning = 1;
+        document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+        document.getElementById("RoundSwitcher").className = "btn btn-danger btn-sm";
+        document.getElementById("RoundSettings").disabled = true;
+        document.getElementById("problemsettings").disabled = true;
+        document.getElementById('nextproblem').disabled = true;
+        if (SelectedTeam > 0 && SelectedTeam <= Teams.length) {
+            document.getElementById('NowInfo').innerHTML = Teams[SelectedTeam - 1];
+        }
+    }
+
+    if (IsAutoScoring == 1 && IsRoundFlowRunning == 0) {
+        resetResponderAndTimer();
+    }
+    confirmAnsToast.hide();
+    correctToast.hide();
+    incorrectToast.hide();
+    hintToast.hide();
+    manualhintToast.hide();
+
+    if (IsAutoScoring == 1 && IsRoundFlowRunning == 1 && IsWinnerTakesAll == 1) {
+        Team_Problems_Count++;
+    }
+
+    isConfirmPending = false;
+    applyRenderedProblem(res, type, {
+        problemNumber: ProblemID + 1,
+        infoId: 0,
+        showAnswer: false,
+        discarded: false
+    });
+
+    if (IsAutoScoring == 1) {
+        if (ResponderTimerMode == 1) { // 抢答
+            ResponderFlow();
+        } else {                       // 轮答
+            if (IsRoundFlowRunning == 0)
+                return;
+            RoundAnswering = 1;
+            if (timeAfter != 0) {
+                IntervalMode = 0;
+                Interval_setTime(timeAfter);
+                Interval_Start();
+            } else {
+                document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-play-fill'></i>";
+                document.getElementById("RoundSwitcher").className = "btn btn-success btn-sm";
+                document.getElementById("RoundSettings").disabled = false;
+                document.getElementById("problemsettings").disabled = false;
+                document.getElementById('nextproblem').disabled = false;
+                IsRoundFlowRunning = 0;
+                syncSession({ timer_action: 'stop' });
+            }
+        }
+    } else {
+        syncSession();
+    }
+}
+
 function reshowLastProblem() {
     var query = "/main/competition/display/problem?guid=" + encodeURIComponent(competition_guid) + "&reshow=1";
     if (LastProblemType >= 0 && LastProblemID > 0) {
@@ -1137,19 +1199,36 @@ function reshowLastProblem() {
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
                 if (parseSessionSaveFailure(res)) {
+                    if (!pendingUnsavedDraw && LastProblemID > 0 && LastProblemType >= 0 && LastProblemType <= 2) {
+                        pendingUnsavedDraw = {
+                            type: LastProblemType,
+                            id: LastProblemID,
+                            autoScoring: IsAutoScoring == 1,
+                            responderTimerMode: ResponderTimerMode,
+                            roundFlowActive: (IsAutoScoring == 1 && IsRoundFlowRunning == 1)
+                        };
+                    }
                     notyf.error("会话快照保存失败，请检查磁盘或权限后再次点击「重新显示上一题」重试（不会消耗新题）。");
                 } else {
                     notyf.error("没有可重新显示的上一题。");
                 }
                 return;
             }
+            var unsavedDraw = pendingUnsavedDraw;
+            if (unsavedDraw) {
+                pendingUnsavedDraw = null;
+                var retryType = (typeof unsavedDraw.type === 'number' && unsavedDraw.type >= 0 && unsavedDraw.type <= 2)
+                    ? unsavedDraw.type
+                    : null;
+                completeDrawnProblemPresentation(res, retryType, { roundFlowActive: !!unsavedDraw.roundFlowActive });
+                notyf.success("已重新显示上一题（未消耗新题）");
+                return;
+            }
             var wasWaiting = (document.getElementById('problemarea').style.display === "none");
-            var isSwitchingToUnsaved = pendingUnsavedDraw || (LastProblemID > 0 && (LastProblemID !== CurrentProblemID || LastProblemType !== CurrentProblemType));
+            var isSwitchingToUnsaved = (LastProblemID > 0 && (LastProblemID !== CurrentProblemID || LastProblemType !== CurrentProblemType));
             if (wasWaiting || isSwitchingToUnsaved) {
-                var nextNum = pendingUnsavedDraw ? (ProblemID + 1) : Math.max(1, ProblemID);
-                pendingUnsavedDraw = false;
                 applyRenderedProblem(res, null, {
-                    problemNumber: nextNum,
+                    problemNumber: Math.max(1, ProblemID),
                     infoId: 0,
                     showAnswer: false,
                     discarded: false
@@ -1222,61 +1301,23 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
                 if (parseSessionSaveFailure(res)) {
-                    pendingUnsavedDraw = true;
+                    pendingUnsavedDraw = {
+                        type: (LastProblemType >= 0 && LastProblemType <= 2) ? LastProblemType : Type,
+                        id: LastProblemID,
+                        autoScoring: IsAutoScoring == 1,
+                        responderTimerMode: ResponderTimerMode,
+                        roundFlowActive: (IsAutoScoring == 1 && IsRoundFlowRunning == 1)
+                    };
                     notyf.error("题目已抽取但会话快照保存失败，请勿重复抽题；请排查后点击「重新显示上一题」重试。");
                 } else {
                     notyf.error("尝试拉取题目时出错。请检查是否剩余足够的题目。");
-                }
-                if (IsAutoScoring == 1 && IsRoundFlowRunning == 1) {
-                    RoundFlow();
+                    if (IsAutoScoring == 1 && IsRoundFlowRunning == 1) {
+                        RoundFlow();
+                    }
                 }
             } else {
-                pendingUnsavedDraw = false;
-                if (IsAutoScoring == 1 && IsRoundFlowRunning == 0) {
-                    resetResponderAndTimer();
-                }
-                confirmAnsToast.hide();
-                correctToast.hide();
-                incorrectToast.hide();
-                hintToast.hide();
-                manualhintToast.hide();
-
-                if (IsAutoScoring == 1 && IsRoundFlowRunning == 1 && IsWinnerTakesAll == 1) {
-                    Team_Problems_Count++;
-                }
-
-                isConfirmPending = false;
-                applyRenderedProblem(res, Type, {
-                    problemNumber: ProblemID + 1,
-                    infoId: 0,
-                    showAnswer: false,
-                    discarded: false
-                });
-
-                if (IsAutoScoring == 1) {
-                    if (ResponderTimerMode == 1) { // 抢答
-                        ResponderFlow();
-                    } else {                       // 轮答
-                        if (IsRoundFlowRunning == 0)
-                            return;
-                        RoundAnswering = 1;
-                        if (timeAfter != 0) {
-                            IntervalMode = 0;
-                            Interval_setTime(timeAfter);
-                            Interval_Start();
-                        } else {
-                            document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-play-fill'></i>";
-                            document.getElementById("RoundSwitcher").className = "btn btn-success btn-sm";
-                            document.getElementById("RoundSettings").disabled = false;
-                            document.getElementById("problemsettings").disabled = false;
-                            document.getElementById('nextproblem').disabled = false;
-                            IsRoundFlowRunning = 0;
-                            syncSession({ timer_action: 'stop' });
-                        }
-                    }
-                } else {
-                    syncSession();
-                }
+                pendingUnsavedDraw = null;
+                completeDrawnProblemPresentation(res, Type);
             }
 
             return;
@@ -1982,8 +2023,14 @@ function restoreSessionOnLoad() {
             && (last_problem_id !== s.current_id || last_problem_type !== s.current_type)) {
             LastProblemType = last_problem_type;
             LastProblemID = last_problem_id;
-            pendingUnsavedDraw = true;
             hasUnsavedLatestDraw = true;
+            pendingUnsavedDraw = {
+                type: last_problem_type,
+                id: last_problem_id,
+                autoScoring: IsAutoScoring == 1,
+                responderTimerMode: ResponderTimerMode,
+                roundFlowActive: (mode === "round" && !!s.round_flow_running && RoundAnswering == 0)
+            };
             updateReshowButton();
         }
 
@@ -2019,6 +2066,20 @@ function restoreSessionOnLoad() {
                 IsPaused = 0;
                 IntervalID = setInterval(Interval_Counting, 1000);
                 notyf.success("已恢复当前题目与计时（剩余 " + remaining + " 秒）");
+            } else if (hasUnsavedLatestDraw && mode === "round" && s.round_flow_running && RoundAnswering == 0) {
+                IsResponderFlowRunning = 0;
+                IsRoundFlowRunning = 1;
+                Responding = 0;
+                EarlyResponding = 0;
+                IsStarted = 0;
+                IsPaused = 0;
+                IntervalMode = 0;
+                document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                document.getElementById("RoundSwitcher").className = "btn btn-danger btn-sm";
+                document.getElementById("RoundSettings").disabled = true;
+                document.getElementById("problemsettings").disabled = true;
+                document.getElementById('nextproblem').disabled = true;
+                Interval_setTime(timeBefore);
             } else {
                 IsResponderFlowRunning = 0;
                 IsRoundFlowRunning = 0;
@@ -2071,7 +2132,14 @@ function restoreSessionOnLoad() {
             notyf.success("已恢复当前题目与抢答状态");
         } else {
             Interval_setTime(mode === "timer" ? defaultTime : timeBefore);
-            if (s.round_flow_running || s.responder_flow_running) {
+            if (hasUnsavedLatestDraw && mode === "round" && s.round_flow_running && RoundAnswering == 0) {
+                IsRoundFlowRunning = 1;
+                document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                document.getElementById("RoundSwitcher").className = "btn btn-danger btn-sm";
+                document.getElementById("RoundSettings").disabled = true;
+                document.getElementById("problemsettings").disabled = true;
+                document.getElementById('nextproblem').disabled = true;
+            } else if (s.round_flow_running || s.responder_flow_running) {
                 if (mode === "round" && RoundAnswering == 0) {
                     RoundDelay();
                 }
@@ -2089,8 +2157,9 @@ function restoreSessionOnLoad() {
     }
 
     // 若计时在刷新前已过期中断，将清理后的非运行态同步回服务端
-    if ((s.timer_started_at > 0 && !s.timer_paused && (s.timer_duration - Math.max(0, ((typeof server_now === 'number' && server_now > 0) ? server_now : Math.floor(Date.now() / 1000)) - s.timer_started_at)) <= 0)
-        || ((s.round_flow_running || s.responder_flow_running) && !(s.timer_started_at > 0 && !s.timer_paused) && !(s.timer_paused && s.timer_remaining > 0) && !(mode === "responder" && s.responding))) {
+    if (!(hasUnsavedLatestDraw && mode === "round" && s.round_flow_running && RoundAnswering == 0)
+        && ((s.timer_started_at > 0 && !s.timer_paused && (s.timer_duration - Math.max(0, ((typeof server_now === 'number' && server_now > 0) ? server_now : Math.floor(Date.now() / 1000)) - s.timer_started_at)) <= 0)
+            || ((s.round_flow_running || s.responder_flow_running) && !(s.timer_started_at > 0 && !s.timer_paused) && !(s.timer_paused && s.timer_remaining > 0) && !(mode === "responder" && s.responding)))) {
         syncSession({ timer_action: 'stop' });
     }
 }

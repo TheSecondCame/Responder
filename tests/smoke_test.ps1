@@ -148,6 +148,14 @@ try {
         "Opt 4",
         "B",
         "",
+        "1 0",
+        "CI Choice Question 3",
+        "Alt A",
+        "Alt B",
+        "Alt C",
+        "Alt D",
+        "C",
+        "",
         "1 1",
         "CI Completion Question 1",
         "42",
@@ -187,11 +195,11 @@ try {
         throw "problem_list.json was not created after convert"
     }
     $plBefore = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($plBefore.choice_problems.Count -ne 2) {
-        throw "Expected 2 choice problems after convert, got $($plBefore.choice_problems.Count)"
+    if ($plBefore.choice_problems.Count -ne 3) {
+        throw "Expected 3 choice problems after convert, got $($plBefore.choice_problems.Count)"
     }
 
-    $newCompBody = "name=CISessionMatch&description=Smoke&choiceCount=2&completionCount=1&infoCount=1&teamName1=Alpha&teamName2=Beta"
+    $newCompBody = "name=CISessionMatch&description=Smoke&choiceCount=3&completionCount=1&infoCount=1&teamName1=Alpha&teamName2=Beta"
     $rNewComp = Invoke-WebRequest -Uri "$baseUrl/main/competition/new" -Method Post -Headers $headers -Body $newCompBody -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
     if ($rNewComp.Content -notmatch 'guid=([A-Fa-f0-9\-]+)') {
         throw "Failed to extract competition GUID from POST /main/competition/new"
@@ -268,12 +276,14 @@ try {
         throw "Expected session.json to exist before pause"
     }
 
-    # Simulate session.json write failure (e.g. read-only / locked file) during draw of Q2:
-    # must surface failure visibly, keep previous session intact, and allow same-question retry without consuming a new problem
+    # Simulate session.json write failure during Team 2's draw of Q2:
+    # must surface failure visibly, keep previous session intact, and allow empty-body reshow retry without consuming a new problem
+    $q2DrawState = '{"mode":"round","round_team":2,"round_team_cnt":2,"round_count":15,"team_problems_count":1,"round_answering":true,"auto_scoring":true,"winner_takes_all":true,"problem_number":2,"team_order":[1,0]}'
+    $encodedQ2DrawState = [System.Uri]::EscapeDataString($q2DrawState)
     $sessionItem = Get-Item $sessionFilePath
     $sessionItem.IsReadOnly = $true
     try {
-        $rDrawFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+        $rDrawFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedQ2DrawState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
         if ($rDrawFail.Content.Trim() -notmatch '^fail : session_save_failed\|0\|(\d+)$') {
             throw "Expected fail : session_save_failed|0|<id> on read-only session.json, got: $($rDrawFail.Content)"
         }
@@ -282,10 +292,11 @@ try {
             throw "Expected Q2 draw to pick a different problem from Q1 ($drawnId)"
         }
         $sessionAfterFail = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($sessionAfterFail.current_id -ne $drawnId) {
-            throw "session.json should still hold Q1 ($drawnId) after failed Q2 write, got $($sessionAfterFail.current_id)"
+        if ($sessionAfterFail.current_id -ne $drawnId -or $sessionAfterFail.round_team -ne 2) {
+            throw "session.json should still hold Q1 ($drawnId) and round_team=2 after failed Q2 write, got current_id=$($sessionAfterFail.current_id) round_team=$($sessionAfterFail.round_team)"
         }
-        $rReshowWhileFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+        # Browser reshowLastProblem() sends empty body
+        $rReshowWhileFail = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
         if ($rReshowWhileFail.Content.Trim() -ne "fail : session_save_failed|0|$failedQ2Id") {
             throw "Expected reshow while read-only to return fail : session_save_failed|0|$failedQ2Id, got: $($rReshowWhileFail.Content)"
         }
@@ -293,21 +304,57 @@ try {
         $sessionItem.IsReadOnly = $false
     }
 
-    # Retry same question via reshow=1 after write access is restored; must not consume another problem
-    $rReshowRetryQ2 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    # Retry same question via empty-body reshow=1 after write access is restored (matches browser button)
+    $rReshowRetryQ2 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1&type=0&id=$failedQ2Id" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
     if ($rReshowRetryQ2.StatusCode -ne 200 -or $rReshowRetryQ2.Content -notmatch "data-id=`"$failedQ2Id`"") {
-        throw "Retry reshow failed to return Q2 ($failedQ2Id)"
+        throw "Empty-body retry reshow failed to return Q2 ($failedQ2Id)"
     }
     $sessionAfterRetry = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($sessionAfterRetry.current_id -ne $failedQ2Id) {
-        throw "Expected session.json current_id=$failedQ2Id after retry, got $($sessionAfterRetry.current_id)"
+        throw "Expected session.json current_id=$failedQ2Id after empty-body retry, got $($sessionAfterRetry.current_id)"
     }
     $usedAfterQ2Retry = Get-UsedChoiceCount $problemListPath
     if ($usedAfterQ2Retry -ne 2) {
         throw "Expected 2 used choice problems after Q2 retry, got $usedAfterQ2Retry"
     }
 
-    # Pause clears session.json while preserving last_problem_id ($failedQ2Id) for reshow
+    # Simulate JS post-recovery session sync (Team 2 answering Q2 with timer) + grading + next team draw (Q3)
+    $q2RecoverState = '{"mode":"round","round_team":2,"round_team_cnt":2,"round_count":15,"team_problems_count":1,"round_answering":true,"round_flow_running":true,"selected_team":2,"auto_scoring":true,"winner_takes_all":true,"problem_number":2,"team_order":[1,0]}'
+    $encodedQ2RecoverState = [System.Uri]::EscapeDataString($q2RecoverState)
+    $rQ2TimerSync = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/session" -Method Post -Headers $headers -Body "guid=$compGuid&timer_action=start&timer_duration=15&timer_mode=0&state=$encodedQ2RecoverState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rQ2TimerSync.Content.Trim() -ne "success") {
+        throw "Post-recovery Q2 session sync failed: $($rQ2TimerSync.Content)"
+    }
+    $sessionQ2Answering = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($sessionQ2Answering.current_id -ne $failedQ2Id -or $sessionQ2Answering.round_team -ne 2 -or $sessionQ2Answering.problem_number -ne 2 -or -not $sessionQ2Answering.round_answering -or $sessionQ2Answering.timer_started_at -le 0) {
+        throw "Recovered Q2 answering session mismatch: $(Get-Content $sessionFilePath -Raw -Encoding UTF8)"
+    }
+
+    $rQ2Score = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/scores?guid=$compGuid&team=1&score=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rQ2Score.Content.Trim() -ne "success") {
+        throw "Score update after Q2 answer failed: $($rQ2Score.Content)"
+    }
+
+    $q3DrawState = '{"mode":"round","round_team":1,"round_team_cnt":1,"round_count":16,"team_problems_count":1,"round_answering":true,"round_flow_running":true,"selected_team":1,"auto_scoring":true,"winner_takes_all":true,"problem_number":3,"team_order":[1,0]}'
+    $encodedQ3DrawState = [System.Uri]::EscapeDataString($q3DrawState)
+    $rDrawQ3 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedQ3DrawState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rDrawQ3.StatusCode -ne 200 -or $rDrawQ3.Content -notmatch 'id="problemMeta" data-type="0" data-id="(\d+)"') {
+        throw "Next team Q3 draw failed: $($rDrawQ3.Content)"
+    }
+    $q3Id = [int]$Matches[1]
+    if ($q3Id -eq $drawnId -or $q3Id -eq $failedQ2Id) {
+        throw "Expected Q3 to differ from Q1 ($drawnId) and Q2 ($failedQ2Id), got $q3Id"
+    }
+    $sessionAfterQ3 = Get-Content $sessionFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($sessionAfterQ3.current_id -ne $q3Id -or $sessionAfterQ3.round_team -ne 1 -or $sessionAfterQ3.round_count -ne 16 -or $sessionAfterQ3.problem_number -ne 3) {
+        throw "Unexpected session after Q3 draw: $(Get-Content $sessionFilePath -Raw -Encoding UTF8)"
+    }
+    $usedAfterQ3 = Get-UsedChoiceCount $problemListPath
+    if ($usedAfterQ3 -ne 3) {
+        throw "Expected 3 used choice problems after Q3 draw, got $usedAfterQ3"
+    }
+
+    # Pause clears session.json while preserving last_problem_id ($q3Id) for reshow
     $rPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=0" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
     if ($rPause.Content.Trim() -ne "success" -or (Test-Path $sessionFilePath)) {
         throw "Pause did not succeed or did not clear session.json"
@@ -320,11 +367,11 @@ try {
     }
 
     $rDisplayResume = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
-    if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $failedQ2Id;") {
+    if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $q3Id;") {
         throw "Resumed display page state unexpected after pause"
     }
     $rReshowAfterPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
-    if ($rReshowAfterPause.Content -notmatch "data-id=`"$failedQ2Id`"") {
+    if ($rReshowAfterPause.Content -notmatch "data-id=`"$q3Id`"") {
         throw "Reshow after pause failed"
     }
 

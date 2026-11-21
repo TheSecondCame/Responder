@@ -88,6 +88,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\build_tests\regression_tests.exe
 
+      - name: Run JS display flow tests
+        shell: pwsh
+        run: |
+          node .\tests\display_flow_test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run Server.exe HTTP smoke test
         shell: pwsh
         run: pwsh -File .\tests\smoke_test.ps1 -ExePath .\x64\Release\Server.exe -AssetsDir .\assets
