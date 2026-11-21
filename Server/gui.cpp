@@ -1286,7 +1286,7 @@ namespace
 		HFONT oldF = (HFONT)SelectObject(memDC, g_font_small ? g_font_small : g_font_ui);
 		SIZE ts{};
 		GetTextExtentPoint32W(memDC, label, (int)wcslen(label), &ts);
-		int pillW = std::min(w - 2, ts.cx + S(36));
+		int pillW = std::min<int>(w - 2, (int)ts.cx + S(36));
 		int pillH = std::min(h - 2, S(28));
 		RECT pill = { w - pillW - 1, (h - pillH) / 2, w - 1, (h + pillH) / 2 };
 
