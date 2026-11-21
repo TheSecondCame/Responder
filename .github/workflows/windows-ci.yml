@@ -1,0 +1,99 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+      - "feat/**"
+      - "ci/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC / MSBuild environment
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vsPath) {
+            throw "Visual Studio with MSBuild not found"
+          }
+          Write-Host "Using Visual Studio at: $vsPath"
+          $before = @{}
+          Get-ChildItem Env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd /c "`"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "VsDevCmd.bat failed with exit code $LASTEXITCODE"
+          }
+          foreach ($line in $envDump) {
+            if ($line -match '^([^=]+)=(.*)$') {
+              $k = $Matches[1]
+              $v = $Matches[2]
+              if ($k -ieq 'PATH') {
+                $paths = @($v.Split(';') | Where-Object { $_ })
+                [array]::Reverse($paths)
+                $paths | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+              } elseif (-not $before.ContainsKey($k) -or $before[$k] -ne $v) {
+                "$k=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              }
+            }
+          }
+          $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\amd64\MSBuild.exe"
+          if (-not (Test-Path $msbuild)) {
+            throw "MSBuild.exe not found at $msbuild"
+          }
+          "MSBUILD_EXE=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build Debug|x64
+        shell: pwsh
+        run: |
+          & $env:MSBUILD_EXE "Responder by STA.slnx" /p:Configuration=Debug /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Release|x64
+        shell: pwsh
+        run: |
+          & $env:MSBUILD_EXE "Responder by STA.slnx" /p:Configuration=Release /p:Platform=x64 /p:PreBuildEventUseInBuild=false /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and run C++ regression tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path ".\build_tests" -Force | Out-Null
+          cl /nologo /EHsc /std:c++20 /utf-8 /W3 `
+            /DWIN32_LEAN_AND_MEAN /DNOMINMAX /D_WINSOCK_DEPRECATED_NO_WARNINGS `
+            /IServer `
+            .\tests\regression_tests.cpp `
+            .\Server\responder_problem.cpp `
+            .\Server\functions.cpp `
+            .\Server\logging.cpp `
+            /Fo.\build_tests\ `
+            /Fe.\build_tests\regression_tests.exe `
+            /link user32.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\build_tests\regression_tests.exe
+
+      - name: Run Server.exe HTTP smoke test
+        shell: pwsh
+        run: pwsh -File .\tests\smoke_test.ps1 -ExePath .\x64\Release\Server.exe -AssetsDir .\assets
+
+      - name: Upload Release Server.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Responder-Server-x64-Release
+          path: x64/Release/Server.exe
+          if-no-files-found: error
