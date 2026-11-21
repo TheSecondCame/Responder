@@ -106,6 +106,13 @@ protected:
 	std::string generate_response() override;
 };
 
+class competition_display_session_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response() override;
+};
+
 class competition_enddisplay_handler : public responder_post_request
 {
 protected:
