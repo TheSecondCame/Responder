@@ -8,7 +8,7 @@
   --r-border-strong: #C5D4E8;
   --r-text: #13233A;
   --r-text-sub: #51647D;
-  --r-text-muted: #7C8EA6;
+  --r-text-muted: #5F7089;
 
   --r-accent: #1D63DC;
   --r-accent-hover: #1752B8;
@@ -633,4 +633,54 @@ kbd.r-kbd {
   font-size: 13px;
   color: var(--r-text);
   line-height: 1.55;
+}
+
+/* ===== 可访问性：键盘焦点环 + 减少动效 ===== */
+:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-radius-control);
+}
+
+.btn:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(29, 99, 220, 0.16);
+}
+
+/* 鼠标点击不出现焦点环，仅键盘导航出现 */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===== Toast（Notyf）统一圆角、阴影与语义色 ===== */
+.notyf__toast {
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px rgba(19, 35, 58, 0.18) !important;
+  font-family: var(--r-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 420px !important;
+}
+
+.notyf__toast--success .notyf__ripple {
+  background: var(--r-success) !important;
+}
+
+.notyf__toast--error .notyf__ripple {
+  background: var(--r-danger) !important;
 }

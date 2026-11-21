@@ -113,7 +113,7 @@ namespace theme
 	const COLORREF BORDER        = RGB(220, 230, 242); // 卡片描边 #DCE6F2
 	const COLORREF TEXT          = RGB(19,  35,  58);  // 主文字 #13233A
 	const COLORREF TEXT_SUB      = RGB(81,  100, 125); // 次要文字 #51647D
-	const COLORREF TEXT_MUTED    = RGB(124, 142, 166); // 弱化文字 #7C8EA6
+	const COLORREF TEXT_MUTED    = RGB(95, 112, 137);  // 弱化文字 #5F7089
 	const COLORREF ACCENT        = RGB(29,  99,  220); // 主色 #1D63DC
 	const COLORREF ACCENT_HOT    = RGB(23,  82,  184); // 悬停 #1752B8
 	const COLORREF ACCENT_DN     = RGB(18,  67,  153); // 按下 #124399
@@ -1765,6 +1765,57 @@ namespace
 		EndPaint(hwnd, &ps);
 	}
 
+	// 列表表头自绘：白底、细分隔线、次要色文字，与卡片风格一致
+	LRESULT DrawListHeader(NMCUSTOMDRAW* cd)
+	{
+		switch (cd->dwDrawStage)
+		{
+		case CDDS_PREPAINT:
+		{
+			HBRUSH bg = CreateSolidBrush(theme::FIELD);
+			FillRect(cd->hdc, &cd->rc, bg);
+			DeleteObject(bg);
+			HPEN pen = CreatePen(PS_SOLID, 1, theme::BORDER);
+			HGDIOBJ oldPen = SelectObject(cd->hdc, pen);
+			MoveToEx(cd->hdc, cd->rc.left, cd->rc.bottom - 1, nullptr);
+			LineTo(cd->hdc, cd->rc.right, cd->rc.bottom - 1);
+			SelectObject(cd->hdc, oldPen);
+			DeleteObject(pen);
+			return CDRF_NOTIFYITEMDRAW;
+		}
+		case CDDS_ITEMPREPAINT:
+		{
+			wchar_t text[128] = L"";
+			HDITEMW item{};
+			item.mask = HDI_TEXT;
+			item.pszText = text;
+			item.cchTextMax = 128;
+			HWND header = cd->hdr.hwndFrom;
+			SendMessageW(header, HDM_GETITEMW, (WPARAM)cd->dwItemSpec, (LPARAM)&item);
+
+			RECT rc = cd->rc;
+			// 分隔线：除首列外，在列左侧画一条短竖线
+			if (cd->dwItemSpec > 0) {
+				HPEN sep = CreatePen(PS_SOLID, 1, theme::BORDER);
+				HGDIOBJ oldPen = SelectObject(cd->hdc, sep);
+				MoveToEx(cd->hdc, rc.left, rc.top + S(8), nullptr);
+				LineTo(cd->hdc, rc.left, rc.bottom - S(8));
+				SelectObject(cd->hdc, oldPen);
+				DeleteObject(sep);
+			}
+			rc.left += S(12);
+			rc.right -= S(8);
+			SetBkMode(cd->hdc, TRANSPARENT);
+			SetTextColor(cd->hdc, theme::TEXT_SUB);
+			HGDIOBJ oldFont = SelectObject(cd->hdc, g_font_small ? g_font_small : g_font_ui);
+			DrawTextW(cd->hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			SelectObject(cd->hdc, oldFont);
+			return CDRF_SKIPDEFAULT;
+		}
+		}
+		return CDRF_DODEFAULT;
+	}
+
 	LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 	{
 		switch (msg)
@@ -2004,6 +2055,12 @@ namespace
 		case WM_NOTIFY:
 		{
 			auto* note = (NMHDR*)lp;
+			if (note->code == NM_CUSTOMDRAW) {
+				HWND bankHdr = ListView_GetHeader(GetDlgItem(hwnd, BankList));
+				HWND matchHdr = ListView_GetHeader(GetDlgItem(hwnd, MatchList));
+				if (note->hwndFrom && (note->hwndFrom == bankHdr || note->hwndFrom == matchHdr))
+					return DrawListHeader((NMCUSTOMDRAW*)lp);
+			}
 			if (note->idFrom == BankList) {
 				if (note->code == LVN_ITEMCHANGED)
 					EnableWindow(GetDlgItem(hwnd, BankEdit), !g_op_running && ListView_GetNextItem(note->hwndFrom, -1, LVNI_SELECTED) >= 0);

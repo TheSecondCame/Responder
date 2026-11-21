@@ -45,7 +45,7 @@ body.display-body {
   background: var(--r-success-soft);
   border: 1px solid var(--r-success-border);
   color: var(--r-success);
-  font-size: 12px;
+  font-size: clamp(13px, 0.85vw, 17px);
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -82,7 +82,7 @@ body.display-body {
 
 .display-clock {
   font-family: var(--r-font-mono);
-  font-size: 13px;
+  font-size: clamp(14px, 0.9vw, 18px);
   font-weight: 600;
   color: var(--r-text-sub);
   background: var(--r-field);
@@ -286,7 +286,7 @@ body.display-body {
 }
 
 .quiz-responder-text p {
-  font-size: 13px;
+  font-size: clamp(14px, 0.9vw, 18px);
   font-weight: 600;
   margin: 4px 0 0 !important;
   color: var(--r-text-muted);
@@ -367,7 +367,7 @@ body.display-body {
 }
 
 .quiz-score-sub {
-  font-size: 12px;
+  font-size: clamp(13px, 0.85vw, 17px);
   color: var(--r-text-muted);
 }
 
@@ -388,7 +388,7 @@ body.display-body {
 }
 
 .quiz-score-table th {
-  font-size: 12px;
+  font-size: clamp(13px, 0.85vw, 17px);
   font-weight: 700;
   padding: 7px 8px;
 }
