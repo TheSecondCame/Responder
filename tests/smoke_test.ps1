@@ -211,6 +211,23 @@ try {
         throw "Initial GET /main/competition/display did not report has_initial_session = false"
     }
 
+    $checked = @{}
+    foreach ($page in @($rMain, $rProblems, $rDisplayInit)) {
+        $links = [regex]::Matches($page.Content, '(?i)(?:src|href)\s*=\s*["''](/assets/[^"'']+)')
+        if ($links.Count -eq 0) { throw 'Page contains no local stylesheet or script links' }
+        foreach ($link in $links) {
+            $url = [Net.WebUtility]::HtmlDecode($link.Groups[1].Value)
+            if (!$checked.ContainsKey($url)) {
+                $response = Invoke-WebRequest -Uri ($baseUrl + $url) -UseBasicParsing
+                if ($response.StatusCode -ne 200 -or $response.RawContentLength -eq 0) {
+                    throw "Invalid asset response: $url"
+                }
+                $checked[$url] = $true
+            }
+        }
+    }
+    Write-Host "Verified $($checked.Count) distinct page assets over HTTP"
+
     $sessionState = '{"mode":"round","round_team":2,"round_team_cnt":2,"round_count":15,"auto_scoring":true,"problem_number":1,"team_order":[1,0]}'
     $encodedState = [System.Uri]::EscapeDataString($sessionState)
     $rDraw = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
