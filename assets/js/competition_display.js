@@ -65,6 +65,11 @@ async function showAutoCloseWarningSwal(warningText, warningTitle) {
 }
 
 // 结束比赛
+var isRestoringSession = false;
+var isConfirmPending = false;
+var isEndingCompetition = false;
+var sessionSyncChain = Promise.resolve();
+
 function EndCompetition() {
     Swal.fire({
         title: "退出当前正在进行的比赛？",
@@ -89,6 +94,7 @@ function EndCompetition() {
                 })
                     .then((isFinished) => {
                         var isFinished = isFinished.isConfirmed ? 1 : 0;
+                        isEndingCompetition = true;
                         $.ajax({
                             type: 'post',
                             url: "/main/competition/display/enddisplay?guid=" + competition_guid + "&action=" + isFinished,
@@ -97,12 +103,14 @@ function EndCompetition() {
                             data: '',
                             success: function (res) {
                                 if (res != "success") {
+                                    isEndingCompetition = false;
                                     notyf.error("尝试退出比赛时出现意外错误。");
                                     return;
                                 }
                                 window.location.href = "/main/competition/detail?guid=" + competition_guid;
                             },
                             error: function (xhr, status, error) {
+                                isEndingCompetition = false;
                                 notyf.error("尝试退出比赛时出错。请检查网络连接并重试。");
                             }
                         });
@@ -123,6 +131,7 @@ document.addEventListener('DOMContentLoaded', function () {
     incorrectToast = new bootstrap.Toast(document.getElementById('incorrectAns'));
     hintToast = new bootstrap.Toast(document.getElementById('autoScoringHint'));
     manualhintToast = new bootstrap.Toast(document.getElementById('manualScoringHint'));
+    restoreSessionOnLoad();
 });
 
 // 开始比赛
@@ -146,7 +155,9 @@ Swal.fire({
             };
             requestFullScreen();
         }
-        hintToast.show();
+        if (typeof has_initial_session === 'undefined' || !has_initial_session) {
+            hintToast.show();
+        }
     });
 
 /* -- 自动计分模块 -- */
@@ -207,19 +218,21 @@ function Interval_Start() {
 
         IntervalID = setInterval(Interval_Counting, 1000);
         IsStarted = 1;
+        syncSession({ timer_action: 'start', timer_duration: Seconds, timer_mode: IntervalMode });
     }
     else {
         if (!IsPaused) {
             clearInterval(IntervalID);
             document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
-            // Interval_setTime(Seconds);
+            IsPaused = 1;
+            syncSession({ timer_action: 'pause', timer_remaining: Seconds, timer_mode: IntervalMode });
         }
         else {
             IntervalID = setInterval(Interval_Counting, 1000);
             document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-pause-fill'>";
+            IsPaused = 0;
+            syncSession({ timer_action: 'start', timer_duration: Seconds, timer_mode: IntervalMode });
         }
-
-        IsPaused = !IsPaused;
     }
 }
 function Interval_Stop() {
@@ -236,6 +249,7 @@ function Interval_Stop() {
     IsStarted = 0;
     IntervalMode = 0;
     document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
+    syncSession({ timer_action: 'stop' });
 }
 function Interval_Finish() {
     Interval_setTime(defaultTime);
@@ -279,8 +293,9 @@ function Interval_Counting() {
             } else {
                 setTimeout("Interval_Finish();", 3000);
             }
+            syncSession({ timer_action: 'stop' });
         } else if (IntervalMode == 1) { // 抢答模式自动化
-            if (DefaultType == 2) {
+            if ((CurrentProblemType >= 0 ? CurrentProblemType : DefaultType) == 2) {
                 if (InfoID == 0) {
                     SwitchResponder();
                 }
@@ -291,6 +306,8 @@ function Interval_Counting() {
                     IntervalMode = 1;
                     Interval_setTime(10);
                     Interval_Start();
+                } else {
+                    syncSession({ timer_action: 'stop' });
                 }
                 return;
             }
@@ -361,6 +378,7 @@ function RoundFlow() {
         document.getElementById('nextproblem').disabled = false;
 
         IsRoundFlowRunning = 0;
+        syncSession({ timer_action: 'stop' });
         return;
     }
 
@@ -455,6 +473,7 @@ function ResponderFlow() {
         }
 
         IsResponderFlowRunning = 0;
+        syncSession({ timer_action: 'stop' });
         return;
     }
 
@@ -464,12 +483,11 @@ function ResponderFlow() {
         document.getElementById('NowInfo').innerHTML = "等待开始";
         IntervalMode = 1;
         Interval_setTime(timeBefore);
+        EarlyResponding = 1;
         Interval_Start();
         document.getElementById('ResponderSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
         document.getElementById("ResponderSwitcher").className = "btn btn-danger btn-sm";
         document.getElementById("ResponderSettings").disabled = true;
-
-        EarlyResponding = 1;
     } else {
         SwitchResponder();
     }
@@ -493,6 +511,7 @@ function SwitchResponder() {
     }
 
     Responding = !Responding;
+    syncSession({ timer_action: 'stop' });
 }
 // 键盘事件监听抢答
 document.onkeydown = async function () {
@@ -533,6 +552,7 @@ document.onkeydown = async function () {
                 warningInfo += "请不要提早抢答，否则将扣分处理。";
             }
         }
+        syncSession();
 
         await showAutoCloseWarningSwal(warningInfo, "提早抢答警告");
 
@@ -577,6 +597,7 @@ document.onkeydown = async function () {
         document.getElementById("ResponderSwitcher").className = "btn btn-success btn-sm";
         document.getElementById("ResponderSettings").disabled = false;
         IsResponderFlowRunning = 0;
+        syncSession({ timer_action: 'stop' });
     }
 }
 // 切换抢答和计时模式
@@ -602,12 +623,14 @@ function buttonSwitchTimerMode() {
                     Round_Team = Teams.length; // 直接跳过本轮剩余队伍
 
                     SwitchTimerMode(!ResponderTimerMode);
+                    syncSession({ timer_action: 'stop' });
                 }
             });
         return;
     }
 
     SwitchTimerMode(!ResponderTimerMode);
+    syncSession({ timer_action: 'stop' });
 }
 function SwitchTimerMode(ID) {
     SelectedTeam = 0;
@@ -701,6 +724,7 @@ function showSecondInput() {
             const seconds = parseInt(result.value, 10);
             defaultTime = seconds;
             Interval_setTime(seconds);
+            syncSession();
         }
     });
 }
@@ -926,6 +950,7 @@ function SetResponder() {
                     incorrectToast.hide();
                     hintToast.hide();
                     manualhintToast.show();
+                    syncSession({ timer_action: 'stop' });
                 });
                 return;
             }
@@ -966,6 +991,7 @@ function SetResponder() {
                 EarlyResponderWarningSubValue = earlyResponderWarningSubValue;
             }
             Interval_setTime(timeBefore);
+            syncSession();
         }
     });
 }
@@ -988,8 +1014,138 @@ function resetResponderAndTimer() {
 
 /* -- 题目显示模块 -- */
 var ProblemID = 0, InfoID = 0, DefaultType = 0;
+var CurrentProblemType = -1;
+var LastProblemType = (typeof last_problem_type !== 'undefined') ? last_problem_type : -1;
+var LastProblemID = (typeof last_problem_id !== 'undefined') ? last_problem_id : 0;
 var IsDiscarded = 0;
 var IsShowAnswer = 1;
+
+function updateReshowButton() {
+    var btn = document.getElementById('reshowproblem');
+    if (btn) {
+        btn.disabled = !(LastProblemID > 0 && LastProblemType >= 0 && LastProblemType <= 2);
+    }
+}
+
+function applyRenderedProblem(html, type, opts) {
+    opts = opts || {};
+    var area = document.getElementById('dymproblemarea');
+    area.style.display = "none";
+    area.innerHTML = html;
+
+    var meta = document.getElementById('problemMeta');
+    if (meta) {
+        var metaType = parseInt(meta.getAttribute('data-type'), 10);
+        var metaId = parseInt(meta.getAttribute('data-id'), 10);
+        if ((type === undefined || type === null || type < 0) && !isNaN(metaType)) {
+            type = metaType;
+        }
+        if (!isNaN(metaType) && metaType >= 0 && metaType <= 2) {
+            LastProblemType = metaType;
+        }
+        if (!isNaN(metaId) && metaId > 0) {
+            LastProblemID = metaId;
+        }
+    }
+    if (type !== undefined && type !== null && type >= 0 && type <= 2) {
+        CurrentProblemType = type;
+        LastProblemType = type;
+    }
+    updateReshowButton();
+
+    var showAnswer = !!opts.showAnswer;
+    IsShowAnswer = showAnswer ? 1 : 0;
+    IsDiscarded = opts.discarded ? 1 : 0;
+    document.getElementById('ansarea').style.display = showAnswer ? "block" : "none";
+    document.getElementById('showanswer').disabled = showAnswer;
+
+    if (typeof opts.problemNumber === 'number') {
+        ProblemID = opts.problemNumber;
+    }
+    document.getElementById('problemtitle').innerHTML = "第" + ProblemID + "题";
+
+    if (CurrentProblemType != 0) {
+        document.getElementById('d1area').style.display = "none";
+        document.getElementById('d2area').style.display = "none";
+        document.getElementById('d3area').style.display = "none";
+        document.getElementById('d4area').style.display = "none";
+    } else {
+        document.getElementById('d1area').style.display = "block";
+        document.getElementById('d2area').style.display = "block";
+        document.getElementById('d3area').style.display = "block";
+        document.getElementById('d4area').style.display = "block";
+    }
+
+    if (CurrentProblemType != 2) {
+        document.getElementById('ta').innerHTML = "A.&nbsp";
+        document.getElementById('tb').innerHTML = "B.&nbsp";
+        document.getElementById('tc').innerHTML = "C.&nbsp";
+        document.getElementById('td').innerHTML = "D.&nbsp";
+        document.getElementById('nextinfo').disabled = true;
+    } else {
+        document.getElementById('ta').innerHTML = "信息1&nbsp";
+        document.getElementById('tb').innerHTML = "信息2&nbsp";
+        document.getElementById('tc').innerHTML = "信息3&nbsp";
+        document.getElementById('td').innerHTML = "信息4&nbsp";
+
+        var restoredInfoId = (typeof opts.infoId === 'number') ? Math.max(0, Math.min(4, opts.infoId)) : 0;
+        if (showAnswer) {
+            restoredInfoId = 4;
+        }
+        InfoID = restoredInfoId;
+        for (var k = 1; k <= restoredInfoId; k++) {
+            document.getElementById('d' + k + 'area').style.display = "block";
+        }
+        document.getElementById('nextinfo').disabled = (InfoID >= 4 || showAnswer);
+    }
+
+    area.style.display = "block";
+    document.getElementById('waitingarea').style.display = "none";
+    document.getElementById('problemarea').style.display = "block";
+}
+
+function reshowLastProblem() {
+    var query = "/main/competition/display/problem?guid=" + encodeURIComponent(competition_guid) + "&reshow=1";
+    if (LastProblemType >= 0 && LastProblemID > 0) {
+        query += "&type=" + LastProblemType + "&id=" + LastProblemID;
+    }
+    $.ajax({
+        type: 'post',
+        url: query,
+        async: true,
+        dataType: 'text',
+        data: '',
+        success: function (res) {
+            if (res.substring(0, 4) == "fail") {
+                notyf.error("没有可重新显示的上一题。");
+                return;
+            }
+            var wasWaiting = (document.getElementById('problemarea').style.display === "none");
+            if (wasWaiting) {
+                applyRenderedProblem(res, null, {
+                    problemNumber: Math.max(1, ProblemID),
+                    infoId: 0,
+                    showAnswer: false,
+                    discarded: false
+                });
+                isConfirmPending = false;
+                syncSession();
+            } else {
+                applyRenderedProblem(res, null, {
+                    problemNumber: Math.max(1, ProblemID),
+                    infoId: InfoID,
+                    showAnswer: IsShowAnswer == 1,
+                    discarded: IsDiscarded == 1
+                });
+            }
+            notyf.success("已重新显示上一题（未消耗新题）");
+        },
+        error: function () {
+            notyf.error("尝试重新显示上一题时出错。请检查网络连接并重试。");
+        }
+    });
+}
+
 function RequestTargetComplexity(Type) {
     var ans;
     $.ajax({
@@ -1015,6 +1171,19 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
         TargetComplexity = RequestTargetComplexity(Type);
     }
 
+    var prospectiveState = collectSessionState();
+    prospectiveState.problem_number = ProblemID + 1;
+    if (IsAutoScoring == 1 && IsRoundFlowRunning == 1 && IsWinnerTakesAll == 1) {
+        prospectiveState.team_problems_count = Team_Problems_Count + 1;
+    }
+    if (IsAutoScoring == 1 && ResponderTimerMode == 0 && IsRoundFlowRunning == 1) {
+        prospectiveState.round_answering = true;
+    }
+    prospectiveState.info_id = 0;
+    prospectiveState.show_answer = false;
+    prospectiveState.discarded = false;
+    prospectiveState.confirm_pending = false;
+
     $.ajax({
         type: 'post',
         url: "/main/competition/display/problem?guid=" + competition_guid + "&type=" + Type
@@ -1023,7 +1192,7 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
                 ? "&complexity=" + TargetComplexity : ""),
         async: true,
         dataType: 'text',
-        data: '',
+        data: { state: JSON.stringify(prospectiveState) },
         success: function (res) {
             if (res.substring(0, 4) == "fail") {
                 notyf.error("尝试拉取题目时出错。请检查是否剩余足够的题目。");
@@ -1031,8 +1200,6 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
                     RoundFlow();
                 }
             } else {
-                IsDiscarded = 0;
-
                 if (IsAutoScoring == 1 && IsRoundFlowRunning == 0) {
                     resetResponderAndTimer();
                 }
@@ -1042,55 +1209,17 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
                 hintToast.hide();
                 manualhintToast.hide();
 
-                document.getElementById('dymproblemarea').style.display = "none";
-                document.getElementById('dymproblemarea').innerHTML = res;
-
-                document.getElementById('ansarea').style.display = "none";
-
-                ProblemID++;
                 if (IsAutoScoring == 1 && IsRoundFlowRunning == 1 && IsWinnerTakesAll == 1) {
                     Team_Problems_Count++;
                 }
 
-                document.getElementById('problemtitle').innerHTML = "第" + ProblemID + "题";
-                if (Type != 0) {
-                    document.getElementById('d1area').style.display = "none";
-                    document.getElementById('d2area').style.display = "none";
-                    document.getElementById('d3area').style.display = "none";
-                    document.getElementById('d4area').style.display = "none";
-                }
-                else {
-                    document.getElementById('d1area').style.display = "block";
-                    document.getElementById('d2area').style.display = "block";
-                    document.getElementById('d3area').style.display = "block";
-                    document.getElementById('d4area').style.display = "block";
-                }
-                if (Type != 2) {
-                    document.getElementById('ta').innerHTML = "A.&nbsp";
-                    document.getElementById('tb').innerHTML = "B.&nbsp";
-                    document.getElementById('tc').innerHTML = "C.&nbsp";
-                    document.getElementById('td').innerHTML = "D.&nbsp";
-
-                    document.getElementById('nextinfo').disabled = true;
-                }
-                else {
-                    document.getElementById('ta').innerHTML = "信息1&nbsp";
-                    document.getElementById('tb').innerHTML = "信息2&nbsp";
-                    document.getElementById('tc').innerHTML = "信息3&nbsp";
-                    document.getElementById('td').innerHTML = "信息4&nbsp";
-
-                    document.getElementById('nextinfo').disabled = false;
-
-                    InfoID = 0;
-                }
-
-                document.getElementById('showanswer').disabled = false;
-                document.getElementById('dymproblemarea').style.display = "block";
-
-                document.getElementById('waitingarea').style.display = "none";
-                document.getElementById('problemarea').style.display = "block";
-
-                IsShowAnswer = 0;
+                isConfirmPending = false;
+                applyRenderedProblem(res, Type, {
+                    problemNumber: ProblemID + 1,
+                    infoId: 0,
+                    showAnswer: false,
+                    discarded: false
+                });
 
                 if (IsAutoScoring == 1) {
                     if (ResponderTimerMode == 1) { // 抢答
@@ -1110,8 +1239,11 @@ function Problem(Type) { // Type: 0-选择题，1-填空题，2-信息题
                             document.getElementById("problemsettings").disabled = false;
                             document.getElementById('nextproblem').disabled = false;
                             IsRoundFlowRunning = 0;
+                            syncSession({ timer_action: 'stop' });
                         }
                     }
+                } else {
+                    syncSession();
                 }
             }
 
@@ -1165,7 +1297,7 @@ function ShowAnswer() {
         RoundFlow();
     }
 
-    if (DefaultType == 2) {
+    if ((CurrentProblemType >= 0 ? CurrentProblemType : DefaultType) == 2) {
         while (InfoID < 4) {
             ShowNextInfo(); // 展示所有剩余信息
         }
@@ -1175,9 +1307,11 @@ function ShowAnswer() {
     document.getElementById('ansarea').style.display = "block";
     document.getElementById('showanswer').disabled = true;
 
+    isConfirmPending = false;
     if (IsAutoScoring == 1) {
         if (SelectedTeam != 0) {
             if (IsDiscarded == 1) {
+                syncSession();
                 return;
             }
 
@@ -1198,15 +1332,18 @@ function ShowAnswer() {
                 document.getElementById('incorrectScoreChange').style.display = "none";
             }
 
+            isConfirmPending = true;
             confirmAnsToast.show();
         }
     }
+    syncSession();
 }
 function ShowNextInfo() {
     InfoID++;
     document.getElementById('d' + InfoID + 'area').style.display = "block";
     if (InfoID == 4)
         document.getElementById('nextinfo').disabled = true;
+    syncSession();
 }
 
 document.getElementById('resetCurrentQuestion').addEventListener('click', function () {
@@ -1221,6 +1358,7 @@ document.getElementById('resetCurrentQuestion').addEventListener('click', functi
         .then((reset) => {
             if (reset.isConfirmed) {
                 ProblemID = 0;
+                syncSession();
                 notyf.success("成功重置了题号，接下来的题目将重新从第1题开始编号。");
             }
         });
@@ -1255,12 +1393,15 @@ document.getElementById('discardCurrentQuestion').addEventListener('click', func
                 }
                 IsDiscarded = 1;
                 IsShowAnswer = 1; // 标记为可以直接切换下一题
+                isConfirmPending = false;
                 confirmAnsToast.hide();
 
                 if (IsAutoScoring == 1 && ResponderTimerMode == 0) {
                     RoundDelay();
+                    syncSession();
                     notyf.success("成功弃用了当前题目，且下一题将仍由当前队伍作答。");
                 } else {
+                    syncSession();
                     notyf.success("成功弃用了当前题目。");
                 }
             }
@@ -1284,6 +1425,7 @@ document.querySelectorAll('input[name="questionType"]').forEach((radio) => {
             DefaultType = 2;
             document.getElementById('nextproblem').innerHTML = "下一信息题";
         }
+        syncSession();
     });
 });
 $(document).ready(function () {
@@ -1433,6 +1575,7 @@ function score_edit(Team) {
 
 function autoScoring_Correct() {
     confirmAnsToast.hide();
+    isConfirmPending = false;
 
     if (IsAutoScoring == 0) return;
     if (SelectedTeam == 0) return;
@@ -1444,15 +1587,18 @@ function autoScoring_Correct() {
         RoundDelay();
     }
 
+    syncSession();
     correctToast.show();
 }
 function autoScoring_Incorrect() {
     confirmAnsToast.hide();
+    isConfirmPending = false;
 
     if (IsAutoScoring == 0) return;
     if (SelectedTeam == 0) return;
 
     score_add_custom(SelectedTeam - 1, -autoSubValue);
+    syncSession();
     incorrectToast.show();
 }
 
@@ -1571,3 +1717,348 @@ function sortTeamsByKeyAsc() {
 
     refreshTeamTableDisplay();
 }
+
+/* -- 会话快照持久化与恢复模块 -- */
+function getCurrentModeString() {
+    if (ResponderTimerMode == 1) {
+        return "responder";
+    }
+    return IsAutoScoring == 1 ? "round" : "timer";
+}
+
+function collectSessionState() {
+    return {
+        round_team: Round_Team,
+        round_team_cnt: Round_Team_Cnt,
+        round_count: Round_Count,
+        team_problems_count: Team_Problems_Count,
+        round_answering: RoundAnswering == 1,
+        round_delayed: IsRoundDelayed == 1,
+        round_flow_running: IsRoundFlowRunning == 1,
+        responder_flow_running: IsResponderFlowRunning == 1,
+        responding: Responding == 1,
+        early_responding: EarlyResponding == 1,
+        selected_team: SelectedTeam,
+        mode: getCurrentModeString(),
+        auto_scoring: IsAutoScoring == 1,
+        auto_complexity: IsAutoComplexity == 1,
+        winner_takes_all: IsWinnerTakesAll == 1,
+        early_responder_warning: IsEarlyResponderWarning == 1,
+        early_warning_trigger_count: EarlyResponderWarningTriggerCount,
+        early_warning_sub_value: EarlyResponderWarningSubValue,
+        early_warning_counts: EarlyWarningCount.slice(),
+        auto_add_value: autoAddValue,
+        auto_sub_value: autoSubValue,
+        time_before: timeBefore,
+        time_after: timeAfter,
+        default_time: defaultTime,
+        target_complexity: Number(TargetComplexity) || 0,
+        problem_number: ProblemID,
+        info_id: InfoID,
+        show_answer: IsShowAnswer == 1,
+        discarded: IsDiscarded == 1,
+        confirm_pending: isConfirmPending,
+        default_type: DefaultType,
+        team_order: team_keys.slice()
+    };
+}
+
+function syncSession(extraParams) {
+    if (isRestoringSession || isEndingCompetition) {
+        return;
+    }
+    var payload = {
+        guid: competition_guid,
+        state: JSON.stringify(collectSessionState())
+    };
+    if (extraParams) {
+        Object.assign(payload, extraParams);
+    }
+    sessionSyncChain = sessionSyncChain.then(function () {
+        return $.ajax({
+            type: 'post',
+            url: "/main/competition/display/session",
+            data: payload,
+            dataType: 'text'
+        }).catch(function () {
+            // 忽略单次同步失败，避免阻塞后续状态同步
+        });
+    });
+}
+
+function applyTeamOrder(order) {
+    if (!Array.isArray(order) || order.length !== team_keys.length) {
+        return;
+    }
+    var keyToIndex = {};
+    for (var i = 0; i < team_keys.length; i++) {
+        keyToIndex[team_keys[i]] = i;
+    }
+    var newTeams = [];
+    var newScores = [];
+    var newTeamKeys = [];
+    var newEarly = [];
+    for (var j = 0; j < order.length; j++) {
+        var idx = keyToIndex[order[j]];
+        if (idx === undefined) {
+            return;
+        }
+        newTeams.push(Teams[idx]);
+        newScores.push(scores[idx]);
+        newTeamKeys.push(team_keys[idx]);
+        newEarly.push(EarlyWarningCount[idx]);
+    }
+    Teams.length = 0;
+    Teams.push(...newTeams);
+    scores.length = 0;
+    scores.push(...newScores);
+    team_keys.length = 0;
+    team_keys.push(...newTeamKeys);
+    EarlyWarningCount.length = 0;
+    EarlyWarningCount.push(...newEarly);
+    refreshTeamTableDisplay();
+}
+
+function restoreSessionOnLoad() {
+    updateReshowButton();
+    if (typeof has_initial_session === 'undefined' || !has_initial_session || typeof initial_session !== 'object' || initial_session === null) {
+        return;
+    }
+
+    var s = initial_session;
+    isRestoringSession = true;
+    try {
+        timeBefore = (typeof s.time_before === 'number') ? s.time_before : timeBefore;
+        timeAfter = (typeof s.time_after === 'number') ? s.time_after : timeAfter;
+        defaultTime = (typeof s.default_time === 'number' && s.default_time > 0) ? s.default_time : defaultTime;
+        IsAutoScoring = s.auto_scoring ? 1 : 0;
+        IsAutoComplexity = s.auto_complexity ? 1 : 0;
+        IsWinnerTakesAll = s.winner_takes_all ? 1 : 0;
+        IsEarlyResponderWarning = s.early_responder_warning ? 1 : 0;
+        EarlyResponderWarningTriggerCount = (typeof s.early_warning_trigger_count === 'number') ? s.early_warning_trigger_count : EarlyResponderWarningTriggerCount;
+        EarlyResponderWarningSubValue = (typeof s.early_warning_sub_value === 'number') ? s.early_warning_sub_value : EarlyResponderWarningSubValue;
+        autoAddValue = (typeof s.auto_add_value === 'number') ? s.auto_add_value : autoAddValue;
+        autoSubValue = (typeof s.auto_sub_value === 'number') ? s.auto_sub_value : autoSubValue;
+        TargetComplexity = (typeof s.target_complexity === 'number') ? s.target_complexity : 0;
+
+        DefaultType = (typeof s.default_type === 'number' && s.default_type >= 0 && s.default_type <= 2) ? s.default_type : 0;
+        if (DefaultType === 0) {
+            document.getElementById('radioChoice').checked = true;
+            document.getElementById('nextproblem').innerHTML = "下一选择题";
+        } else if (DefaultType === 1) {
+            document.getElementById('radioFillIn').checked = true;
+            document.getElementById('nextproblem').innerHTML = "下一填空题";
+        } else if (DefaultType === 2) {
+            document.getElementById('radioInfo').checked = true;
+            document.getElementById('nextproblem').innerHTML = "下一信息题";
+        }
+
+        ProblemID = (typeof s.problem_number === 'number') ? s.problem_number : 0;
+        InfoID = (typeof s.info_id === 'number') ? s.info_id : 0;
+        IsShowAnswer = s.show_answer ? 1 : 0;
+        IsDiscarded = s.discarded ? 1 : 0;
+
+        Round_Count = (typeof s.round_count === 'number') ? s.round_count : 0;
+        Round_Team = (typeof s.round_team === 'number') ? s.round_team : Teams.length;
+        Round_Team_Cnt = (typeof s.round_team_cnt === 'number') ? s.round_team_cnt : 0;
+        Team_Problems_Count = (typeof s.team_problems_count === 'number') ? s.team_problems_count : 0;
+        RoundAnswering = s.round_answering ? 1 : 0;
+        IsRoundDelayed = s.round_delayed ? 1 : 0;
+        SelectedTeam = (typeof s.selected_team === 'number') ? s.selected_team : 0;
+
+        if (Array.isArray(s.early_warning_counts) && s.early_warning_counts.length === Teams.length) {
+            EarlyWarningCount = s.early_warning_counts.slice();
+        }
+        applyTeamOrder(s.team_order);
+
+        var mode = (s.mode === "round" || s.mode === "timer" || s.mode === "responder") ? s.mode : "responder";
+        ResponderTimerMode = (mode === "responder") ? 1 : 0;
+
+        if (mode === "responder") {
+            document.getElementById('timertitle').innerHTML = "抢答";
+            document.getElementById('changetimermode').innerHTML = IsAutoScoring == 1 ? "切换轮答" : "切换计时";
+            document.getElementById('RoundInfo').style.display = "none";
+            document.getElementById('Responder1').style.display = "grid";
+            document.getElementById('Timer1').className = "quiz-timer-main";
+            document.getElementById('ResponderControls').style.display = "block";
+            document.getElementById('RoundControls').style.display = "none";
+            document.getElementById('TimerControls').style.display = "none";
+
+            if (s.responding) {
+                document.getElementById('NowInfo').innerHTML = "抢答中...";
+            } else if (SelectedTeam > 0 && SelectedTeam <= Teams.length) {
+                document.getElementById('NowInfo').innerHTML = Teams[SelectedTeam - 1];
+            } else {
+                document.getElementById('NowInfo').innerHTML = "等待开始";
+            }
+        } else if (mode === "round") {
+            document.getElementById('timertitle').innerHTML = "轮答";
+            document.getElementById('changetimermode').innerHTML = "切换抢答";
+            document.getElementById('RoundInfo').style.display = "block";
+            document.getElementById('Responder1').style.display = "grid";
+            document.getElementById('Timer1').className = "quiz-timer-main";
+            document.getElementById('ResponderControls').style.display = "none";
+            document.getElementById('TimerControls').style.display = "none";
+            document.getElementById('RoundControls').style.display = "block";
+
+            if (SelectedTeam > 0 && SelectedTeam <= Teams.length) {
+                document.getElementById('NowInfo').innerHTML = Teams[SelectedTeam - 1];
+                if (IsWinnerTakesAll == 0) {
+                    document.getElementById('RoundInfo').innerHTML = "第" + Round_Count + "轮，第" + Round_Team_Cnt + "位次";
+                } else {
+                    var qOrd = RoundAnswering ? Math.max(1, Team_Problems_Count) : (Team_Problems_Count + 1);
+                    document.getElementById('RoundInfo').innerHTML = "第" + Round_Team_Cnt + "位次，第" + qOrd + "题";
+                }
+            } else {
+                document.getElementById('NowInfo').innerHTML = "等待开始";
+                document.getElementById('RoundInfo').innerHTML = "切换下一题以自动开始轮答";
+            }
+        } else {
+            document.getElementById('timertitle').innerHTML = "倒计时";
+            document.getElementById('changetimermode').innerHTML = "切换抢答";
+            document.getElementById('RoundInfo').style.display = "none";
+            document.getElementById('Responder1').style.display = "none";
+            document.getElementById('Timer1').className = "quiz-timer-only-main";
+            document.getElementById('ResponderControls').style.display = "none";
+            document.getElementById('RoundControls').style.display = "none";
+            document.getElementById('TimerControls').style.display = "block";
+        }
+
+        if (typeof initial_problem_html === 'string' && initial_problem_html.length > 0 && s.current_id > 0) {
+            applyRenderedProblem(initial_problem_html, s.current_type, {
+                problemNumber: ProblemID,
+                infoId: InfoID,
+                showAnswer: IsShowAnswer == 1,
+                discarded: IsDiscarded == 1
+            });
+
+            if (s.confirm_pending && IsAutoScoring == 1 && SelectedTeam > 0 && SelectedTeam <= Teams.length && IsDiscarded == 0) {
+                document.getElementById('teamName_t1').innerHTML
+                    = document.getElementById('teamName_t2').innerHTML
+                    = document.getElementById('teamName_t3').innerHTML
+                    = Teams[SelectedTeam - 1];
+                document.getElementById('correctScoreChange').style.display = (autoAddValue > 0) ? "inline-block" : "none";
+                document.getElementById('incorrectScoreChange').style.display = (autoSubValue > 0) ? "inline-block" : "none";
+                isConfirmPending = true;
+                confirmAnsToast.show();
+            }
+        }
+
+        var nowSec = (typeof server_now === 'number' && server_now > 0) ? server_now : Math.floor(Date.now() / 1000);
+        if (s.timer_started_at > 0 && !s.timer_paused) {
+            var elapsed = Math.max(0, nowSec - s.timer_started_at);
+            var remaining = (s.timer_duration || 0) - elapsed;
+            if (remaining > 0) {
+                IsResponderFlowRunning = s.responder_flow_running ? 1 : 0;
+                IsRoundFlowRunning = s.round_flow_running ? 1 : 0;
+                EarlyResponding = s.early_responding ? 1 : 0;
+                Responding = 0;
+
+                if (IsResponderFlowRunning == 1) {
+                    document.getElementById('ResponderSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                    document.getElementById("ResponderSwitcher").className = "btn btn-danger btn-sm";
+                    document.getElementById("ResponderSettings").disabled = true;
+                }
+                if (IsRoundFlowRunning == 1) {
+                    document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                    document.getElementById("RoundSwitcher").className = "btn btn-danger btn-sm";
+                    document.getElementById("RoundSettings").disabled = true;
+                    document.getElementById("problemsettings").disabled = true;
+                    document.getElementById('nextproblem').disabled = true;
+                }
+
+                IntervalMode = (typeof s.timer_mode === 'number') ? s.timer_mode : 0;
+                Interval_setTime(remaining);
+                document.getElementById("IntervalSet").disabled = true;
+                document.getElementById("IntervalStop").disabled = false;
+                document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-pause-fill'>";
+                IsStarted = 1;
+                IsPaused = 0;
+                IntervalID = setInterval(Interval_Counting, 1000);
+                notyf.success("已恢复当前题目与计时（剩余 " + remaining + " 秒）");
+            } else {
+                IsResponderFlowRunning = 0;
+                IsRoundFlowRunning = 0;
+                Responding = 0;
+                EarlyResponding = 0;
+                IsStarted = 0;
+                IsPaused = 0;
+                IntervalMode = 0;
+                if (mode === "round" && s.round_flow_running && RoundAnswering == 0) {
+                    RoundDelay();
+                }
+                Interval_setTime(mode === "timer" ? defaultTime : timeBefore);
+                notyf.error("计时已中断，可重新开始");
+            }
+        } else if (s.timer_paused && s.timer_remaining > 0) {
+            IsResponderFlowRunning = s.responder_flow_running ? 1 : 0;
+            IsRoundFlowRunning = s.round_flow_running ? 1 : 0;
+            EarlyResponding = s.early_responding ? 1 : 0;
+            Responding = 0;
+
+            if (IsResponderFlowRunning == 1) {
+                document.getElementById('ResponderSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                document.getElementById("ResponderSwitcher").className = "btn btn-danger btn-sm";
+                document.getElementById("ResponderSettings").disabled = true;
+            }
+            if (IsRoundFlowRunning == 1) {
+                document.getElementById('RoundSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+                document.getElementById("RoundSwitcher").className = "btn btn-danger btn-sm";
+                document.getElementById("RoundSettings").disabled = true;
+                document.getElementById("problemsettings").disabled = true;
+                document.getElementById('nextproblem').disabled = true;
+            }
+
+            IntervalMode = (typeof s.timer_mode === 'number') ? s.timer_mode : 0;
+            Interval_setTime(s.timer_remaining);
+            document.getElementById("IntervalSet").disabled = true;
+            document.getElementById("IntervalStop").disabled = false;
+            document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
+            IsStarted = 1;
+            IsPaused = 1;
+            notyf.success("已恢复当前状态（计时已暂停，可点击继续或重新开始）");
+        } else if (mode === "responder" && s.responding) {
+            IsResponderFlowRunning = 1;
+            Responding = 1;
+            EarlyResponding = 0;
+            document.getElementById('ResponderSwitcher').innerHTML = "<i class='bi bi-stop-fill'></i>";
+            document.getElementById("ResponderSwitcher").className = "btn btn-danger btn-sm";
+            document.getElementById("ResponderSettings").disabled = true;
+            Interval_setTime(timeBefore);
+            notyf.success("已恢复当前题目与抢答状态");
+        } else {
+            Interval_setTime(mode === "timer" ? defaultTime : timeBefore);
+            if (s.round_flow_running || s.responder_flow_running) {
+                if (mode === "round" && RoundAnswering == 0) {
+                    RoundDelay();
+                }
+                notyf.error("计时已中断，可重新开始");
+            } else if (s.current_id > 0) {
+                notyf.success("已恢复当前题目与轮次进度");
+            }
+        }
+    } finally {
+        isRestoringSession = false;
+    }
+
+    // 若计时在刷新前已过期中断，将清理后的非运行态同步回服务端
+    if ((s.timer_started_at > 0 && !s.timer_paused && (s.timer_duration - Math.max(0, ((typeof server_now === 'number' && server_now > 0) ? server_now : Math.floor(Date.now() / 1000)) - s.timer_started_at)) <= 0)
+        || ((s.round_flow_running || s.responder_flow_running) && !(s.timer_started_at > 0 && !s.timer_paused) && !(s.timer_paused && s.timer_remaining > 0) && !(mode === "responder" && s.responding))) {
+        syncSession({ timer_action: 'stop' });
+    }
+}
+
+window.addEventListener('pagehide', function () {
+    if (isEndingCompetition || !navigator.sendBeacon) {
+        return;
+    }
+    var params = new URLSearchParams();
+    params.set('guid', competition_guid);
+    params.set('state', JSON.stringify(collectSessionState()));
+    if (IsStarted && IsPaused) {
+        params.set('timer_action', 'pause');
+        params.set('timer_remaining', String(Seconds));
+        params.set('timer_mode', String(IntervalMode));
+    }
+    navigator.sendBeacon('/main/competition/display/session', params);
+});

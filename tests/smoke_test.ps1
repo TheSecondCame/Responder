@@ -130,6 +130,155 @@ try {
         throw "POST /main/problems action=backup failed"
     }
 
+    # Upload a minimal UTF-8 problem bank and test display session persistence & recovery
+    $bankText = @(
+        "1 0",
+        "CI Choice Question 1",
+        "Option A",
+        "Option B",
+        "Option C",
+        "Option D",
+        "A",
+        "",
+        "2 0",
+        "CI Choice Question 2",
+        "Opt 1",
+        "Opt 2",
+        "Opt 3",
+        "Opt 4",
+        "B",
+        "",
+        "1 1",
+        "CI Completion Question 1",
+        "42",
+        "",
+        "1 2",
+        "CI Info Question 1",
+        "Clue 1",
+        "Clue 2",
+        "Clue 3",
+        "Clue 4",
+        "Answer"
+    ) -join "`n"
+    $bankBytes = [System.Text.Encoding]::UTF8.GetBytes($bankText)
+
+    Add-Type -AssemblyName System.Net.Http
+    $httpHandler = New-Object System.Net.Http.HttpClientHandler
+    $httpHandler.UseCookies = $false
+    $httpClient = New-Object System.Net.Http.HttpClient($httpHandler)
+    try {
+        $httpClient.DefaultRequestHeaders.Add("Cookie", "token=$token")
+        $multipart = New-Object System.Net.Http.MultipartFormDataContent
+        $actionContent = New-Object System.Net.Http.StringContent("convert")
+        $multipart.Add($actionContent, "action")
+        $fileContent = New-Object System.Net.Http.ByteArrayContent(,$bankBytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
+        $multipart.Add($fileContent, "file", "bank.txt")
+        $uploadResp = $httpClient.PostAsync("$baseUrl/main/problems", $multipart).GetAwaiter().GetResult()
+        if (-not $uploadResp.IsSuccessStatusCode) {
+            throw "POST /main/problems convert failed with status $($uploadResp.StatusCode)"
+        }
+    } finally {
+        $httpClient.Dispose()
+    }
+
+    $problemListPath = Join-Path $staging "data\problems\problem_list.json"
+    if (-not (Test-Path $problemListPath)) {
+        throw "problem_list.json was not created after convert"
+    }
+    $plBefore = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($plBefore.choice_problems.Count -ne 2) {
+        throw "Expected 2 choice problems after convert, got $($plBefore.choice_problems.Count)"
+    }
+
+    $newCompBody = "name=CISessionMatch&description=Smoke&choiceCount=2&completionCount=1&infoCount=1&teamName1=Alpha&teamName2=Beta"
+    $rNewComp = Invoke-WebRequest -Uri "$baseUrl/main/competition/new" -Method Post -Headers $headers -Body $newCompBody -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rNewComp.Content -notmatch 'guid=([A-Fa-f0-9\-]+)') {
+        throw "Failed to extract competition GUID from POST /main/competition/new"
+    }
+    $compGuid = $Matches[1]
+
+    $rDisplayInit = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
+    if ($rDisplayInit.StatusCode -ne 200 -or $rDisplayInit.Content -notmatch 'var has_initial_session = false;') {
+        throw "Initial GET /main/competition/display did not report has_initial_session = false"
+    }
+
+    $sessionState = '{"mode":"round","round_team":2,"round_team_cnt":2,"round_count":15,"auto_scoring":true,"problem_number":1,"team_order":[1,0]}'
+    $encodedState = [System.Uri]::EscapeDataString($sessionState)
+    $rDraw = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&type=0" -Method Post -Headers $headers -Body "state=$encodedState" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rDraw.StatusCode -ne 200 -or $rDraw.Content -notmatch 'id="problemMeta" data-type="0" data-id="(\d+)"') {
+        throw "POST /main/competition/display/problem did not return expected problemMeta"
+    }
+    $drawnId = [int]$Matches[1]
+
+    $rTimerStart = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/session" -Method Post -Headers $headers -Body "guid=$compGuid&timer_action=start&timer_duration=15&timer_mode=0" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rTimerStart.Content.Trim() -ne "success") {
+        throw "POST /main/competition/display/session failed: $($rTimerStart.Content)"
+    }
+
+    $plAfterDraw = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $usedAfterDraw = ($plAfterDraw.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    if ($usedAfterDraw -ne 1) {
+        throw "Expected 1 used choice problem after draw, got $usedAfterDraw"
+    }
+
+    # Simulate browser F5 refresh: session & question must be restored without consuming a new problem
+    $rDisplayRefresh = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
+    if ($rDisplayRefresh.Content -notmatch 'var has_initial_session = true;') {
+        throw "Refreshed GET /main/competition/display did not report has_initial_session = true"
+    }
+    if ($rDisplayRefresh.Content -notmatch 'var initial_session = (\{.*?\});') {
+        throw "Refreshed GET /main/competition/display missing initial_session JSON"
+    }
+    $restoredSession = $Matches[1] | ConvertFrom-Json
+    if ($restoredSession.current_type -ne 0 -or $restoredSession.current_id -ne $drawnId -or $restoredSession.round_team -ne 2 -or $restoredSession.round_count -ne 15 -or $restoredSession.mode -ne "round" -or $restoredSession.timer_started_at -le 0 -or -not $restoredSession.auto_scoring) {
+        throw "Restored session fields mismatch: $($Matches[1])"
+    }
+    if ($rDisplayRefresh.Content -notmatch "CI Choice Question") {
+        throw "Refreshed display page missing drawn problem content"
+    }
+
+    $plAfterRefresh = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $usedAfterRefresh = ($plAfterRefresh.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    if ($usedAfterRefresh -ne 1) {
+        throw "Refresh consumed additional problem! used=$usedAfterRefresh"
+    }
+
+    # Reshow previous problem without consuming a new problem
+    $rReshow = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rReshow.StatusCode -ne 200 -or $rReshow.Content -notmatch "data-id=`"$drawnId`"") {
+        throw "Reshow failed to return drawn problem $drawnId"
+    }
+    $plAfterReshow = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $usedAfterReshow = ($plAfterReshow.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    if ($usedAfterReshow -ne 1) {
+        throw "Reshow consumed additional problem! used=$usedAfterReshow"
+    }
+
+    # Pause clears session.json while preserving last_problem_id for reshow
+    $sessionFilePath = Join-Path $staging "data\competitions\$compGuid\session.json"
+    if (-not (Test-Path $sessionFilePath)) {
+        throw "Expected session.json to exist before pause"
+    }
+    $rPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=0" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rPause.Content.Trim() -ne "success" -or (Test-Path $sessionFilePath)) {
+        throw "Pause did not succeed or did not clear session.json"
+    }
+
+    $rDisplayResume = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
+    if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $drawnId;") {
+        throw "Resumed display page state unexpected after pause"
+    }
+    $rReshowAfterPause = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/problem?guid=$compGuid&reshow=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rReshowAfterPause.Content -notmatch "data-id=`"$drawnId`"") {
+        throw "Reshow after pause failed"
+    }
+
+    $rFinish = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/enddisplay?guid=$compGuid&action=1" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rFinish.Content.Trim() -ne "success" -or (Test-Path $sessionFilePath)) {
+        throw "Finish did not succeed or did not clear session.json"
+    }
+
     $finalLog = Get-Content $logPath -Raw -Encoding UTF8
     if ($finalLog -notmatch "Successful login\. New PIN code:") {
         throw "Expected rotated PIN log entry in server.log"

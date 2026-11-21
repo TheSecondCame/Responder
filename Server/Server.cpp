@@ -54,6 +54,7 @@ namespace
 	competition_display_page cdp2;
 	competition_display_scores_handler cdsh;
 	competition_display_problem_handler cdph;
+	competition_display_session_handler cdssh;
 	competition_enddisplay_handler cdedh;
 
 	// 题库管理（原 Problems Generator 的功能，现已并入服务端）
@@ -82,6 +83,7 @@ namespace
 		cdp2.set_handler(svr);
 		cdsh.set_handler(svr);
 		cdph.set_handler(svr);
+		cdssh.set_handler(svr);
 		cdedh.set_handler(svr);
 
 		pmp.set_handler(svr);

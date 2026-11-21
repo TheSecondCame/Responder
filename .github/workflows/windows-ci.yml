@@ -79,11 +79,12 @@ jobs:
             /IServer `
             .\tests\regression_tests.cpp `
             .\Server\responder_problem.cpp `
+            .\Server\responder_competition.cpp `
             .\Server\functions.cpp `
             .\Server\logging.cpp `
             /Fo.\build_tests\ `
             /Fe.\build_tests\regression_tests.exe `
-            /link user32.lib
+            /link user32.lib ole32.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\build_tests\regression_tests.exe
 

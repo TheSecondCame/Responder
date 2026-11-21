@@ -8,9 +8,119 @@
 #include "responder_competition.h"
 #include "functions.h"
 #include "build.h"
+#include <ctime>
 
 extern problem_list pl;
 extern problem_list pl_unused;
+
+namespace
+{
+	std::string safe_json_for_script(const json& j)
+	{
+		std::string s = j.dump();
+		std::string out;
+		out.reserve(s.size());
+		for (size_t i = 0; i < s.size(); ++i)
+		{
+			if (s[i] == '<' && i + 1 < s.size() && s[i + 1] == '/')
+			{
+				out += "<\\/";
+				++i;
+			}
+			else
+			{
+				out += s[i];
+			}
+		}
+		return out;
+	}
+
+	bool try_parse_int(const std::string& s, int& out)
+	{
+		try
+		{
+			size_t idx = 0;
+			int val = std::stoi(s, &idx);
+			if (idx != s.size())
+				return false;
+			out = val;
+			return true;
+		}
+		catch (...)
+		{
+			return false;
+		}
+	}
+
+	std::string render_problem_html(int type, int id, const std::string& p_content, const std::string p_info[5], const std::string& p_ans)
+	{
+		return R"(
+<div id="problemMeta" data-type=")" + std::to_string(type) + R"(" data-id=")" + std::to_string(id) + R"(" hidden></div>
+<div class="h2" id="task">)" + p_content + R"(</div>
+<div class="h2" id="d1area"><b style="display:inline-block" id="ta"></b><div style="display:inline" id="data1">)" + p_info[1] + R"(</div></div>
+<div class="h2" id="d2area"><b style="display:inline-block" id="tb"></b><div style="display:inline" id="data2">)" + p_info[2] + R"(</div></div>
+<div class="h2" id="d3area"><b style="display:inline-block" id="tc"></b><div style="display:inline" id="data3">)" + p_info[3] + R"(</div></div>
+<div class="h2" id="d4area"><b style="display:inline-block" id="td"></b><div style="display:inline" id="data4">)" + p_info[4] + R"(</div></div>
+<br>
+<div id="ansarea">
+  <p class="h3"><span class="badge bg-success" id="answertitle">答案</span></p> 
+  <div class="h2"><b id="answer">)" + p_ans + R"(</b></div>
+</div>
+)";
+	}
+
+	template <typename T>
+	const T* find_problem_by_id(const std::vector<std::pair<T, int>>& list, int id)
+	{
+		if (id >= 1 && static_cast<size_t>(id) <= list.size() && list[id - 1].first.id == id)
+			return &list[id - 1].first;
+		for (const auto& item : list)
+		{
+			if (item.first.id == id)
+				return &item.first;
+		}
+		return nullptr;
+	}
+
+	bool lookup_and_render_problem(int type, int id, std::string& out_html)
+	{
+		if (id <= 0)
+			return false;
+		std::string p_content, p_info[5], p_ans;
+		if (type == 0)
+		{
+			const problem_choice* p = find_problem_by_id(pl.choice_problems, id);
+			if (!p) return false;
+			p_content = p->content;
+			p_ans = p->answer;
+			for (size_t i = 0; i < 4 && i < p->options.size(); ++i)
+				p_info[i + 1] = p->options[i];
+		}
+		else if (type == 1)
+		{
+			const problem_completion* p = find_problem_by_id(pl.completion_problems, id);
+			if (!p) return false;
+			p_content = p->content;
+			p_ans = p->answer;
+		}
+		else if (type == 2)
+		{
+			const problem_info* p = find_problem_by_id(pl.info_problems, id);
+			if (!p) return false;
+			p_content = p->content;
+			p_ans = p->answer;
+			for (size_t i = 0; i < 4 && i < p->info.size(); ++i)
+				p_info[i + 1] = p->info[i];
+		}
+		else
+		{
+			return false;
+		}
+
+		out_html = render_problem_html(type, id, p_content, p_info, p_ans);
+		return true;
+	}
+}
 
 void new_competition_page::init()
 {
@@ -525,6 +635,7 @@ std::string competition_delete_handler::generate_response()
         return "";
     }
 
+    competition_session::clear(c.guid);
     RemoveDir(("data/competitions/" + c.guid).c_str());
 
 	auto comlist = load_competition_list("data/competitions/list.json");
@@ -809,6 +920,16 @@ void competition_display_page::generate_page()
 	c.competition_status = competition::ONGOING;
 	c.save();
 
+	competition_session session;
+	bool has_session = session.load(c.guid, c.teams.size());
+	std::string initial_problem_html;
+	if (has_session && session.current_id > 0 && session.current_type >= 0 && session.current_type <= 2)
+	{
+		std::lock_guard bank_lock(problem_bank_mutex);
+		lookup_and_render_problem(session.current_type, session.current_id, initial_problem_html);
+	}
+	std::int64_t server_now = static_cast<std::int64_t>(std::time(nullptr));
+
     content = R"(
 <!DOCTYPE html>
 <html lang="zh">
@@ -881,7 +1002,8 @@ void competition_display_page::generate_page()
 
             <div class="quiz-header">
               <h3>题目</h3>
-              <div>
+              <div class="d-flex flex-wrap align-items-center gap-1">
+                <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem()" id="reshowproblem" disabled>重新显示上一题</button>
                 <button class="btn btn-primary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>下一信息</button>
                 <button class="btn btn-danger btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>显示答案</button>
 
@@ -1180,6 +1302,12 @@ void competition_display_page::generate_page()
     TeamsInfo += ";";
 
     content += TeamsInfo + R"(
+    var has_initial_session = )" + std::string(has_session ? "true" : "false") + R"(;
+    var initial_session = )" + safe_json_for_script(session.to_json()) + R"(;
+    var server_now = )" + std::to_string(server_now) + R"(;
+    var initial_problem_html = )" + safe_json_for_script(json(initial_problem_html)) + R"(;
+    var last_problem_type = )" + std::to_string(c.last_problem_type) + R"(;
+    var last_problem_id = )" + std::to_string(c.last_problem_id) + R"(;
   </script>
 
   <!-- Vendor JS Files -->
@@ -1284,18 +1412,65 @@ std::string competition_display_problem_handler::generate_response()
         return "fail : competition isn't ongoing";
     }
 
+    if (params.find("reshow") != params.end() && params["reshow"] == "1")
+    {
+        competition_session session;
+        bool has_session = session.load(c.guid, c.teams.size());
+
+        int target_type = -1;
+        int target_id = 0;
+        if (params.find("type") != params.end() && params.find("id") != params.end())
+        {
+            int parsed_type = -1, parsed_id = 0;
+            if (try_parse_int(params["type"], parsed_type) && try_parse_int(params["id"], parsed_id))
+            {
+                target_type = parsed_type;
+                target_id = parsed_id;
+            }
+        }
+        if (target_id <= 0 && has_session && session.current_id > 0)
+        {
+            target_type = session.current_type;
+            target_id = session.current_id;
+        }
+        if (target_id <= 0 && c.last_problem_id > 0)
+        {
+            target_type = c.last_problem_type;
+            target_id = c.last_problem_id;
+        }
+
+        std::string reshow_html;
+        if (!lookup_and_render_problem(target_type, target_id, reshow_html))
+            return "fail : no previous problem";
+
+        competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
+            s.current_type = target_type;
+            s.current_id = target_id;
+            if (s.shown_at <= 0)
+                s.shown_at = static_cast<std::int64_t>(std::time(nullptr));
+            if (s.problem_number <= 0)
+                s.problem_number = 1;
+        });
+
+        return reshow_html;
+    }
+
     if (params.find("type") == params.end())
     {
         // error: TODO
         return "fail : type not found";
     }
 
+    int req_type = -1;
+    if (!try_parse_int(params["type"], req_type) || req_type < 0 || req_type > 2)
+        return "fail : invalid type";
+
     if (params.find("requestcomplexity") != params.end()) // 用于轮答，请求一种数量足够的难度，失败则返回0; 参数只用于标记，忽略其值
     {
 		int spare_count[4]; // 1-3分别对应难度1-3
 
         // 加载可用题目数量
-        switch (std::stoi(params["type"])) // Type: 0-选择题，1-填空题，2-信息题
+        switch (req_type) // Type: 0-选择题，1-填空题，2-信息题
         {
         case 0:
             spare_count[1] = problem_list::count_unused(pl.choice_problems, 1);
@@ -1334,15 +1509,14 @@ std::string competition_display_problem_handler::generate_response()
     int requested_complexity = 0; // 默认为0：不限
     if (params.find("complexity") != params.end()) // 用于轮答，以前请求了固定的难度
     {
-		requested_complexity = std::stoi(params["complexity"]);
-        if (requested_complexity < 0 || requested_complexity > 3)
+		if (!try_parse_int(params["complexity"], requested_complexity) || requested_complexity < 0 || requested_complexity > 3)
             requested_complexity = 0;
     }
     
     std::string p_content, p_info[5], p_ans;
-    int total_id, random_id, total;
+    int total_id = 0, random_id = 0, total = 0;
     
-    switch (std::stoi(params["type"])) // Type: 0-选择题，1-填空题，2-信息题
+    switch (req_type) // Type: 0-选择题，1-填空题，2-信息题
     {
 	case 0: // 选择题
         if (requested_complexity != 0)
@@ -1484,18 +1658,100 @@ std::string competition_display_problem_handler::generate_response()
         break;
     }
 
-    return R"(
-<div class="h2" id="task">)" + p_content + R"(</div>
-<div class="h2" id="d1area"><b style="display:inline-block" id="ta"></b><div style="display:inline" id="data1">)" + p_info[1] + R"(</div></div>
-<div class="h2" id="d2area"><b style="display:inline-block" id="tb"></b><div style="display:inline" id="data2">)" + p_info[2] + R"(</div></div>
-<div class="h2" id="d3area"><b style="display:inline-block" id="tc"></b><div style="display:inline" id="data3">)" + p_info[3] + R"(</div></div>
-<div class="h2" id="d4area"><b style="display:inline-block" id="td"></b><div style="display:inline" id="data4">)" + p_info[4] + R"(</div></div>
-<br>
-<div id="ansarea">
-  <p class="h3"><span class="badge bg-success" id="answertitle">答案</span></p> 
-  <div class="h2"><b id="answer">)" + p_ans + R"(</b></div>
-</div>
-)";
+    c.last_problem_type = req_type;
+    c.last_problem_id = total_id;
+    c.save();
+
+    competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
+        bool has_client_state = false;
+        if (params.find("state") != params.end())
+        {
+            json client_state = json::parse(params["state"], nullptr, false);
+            if (client_state.is_object())
+            {
+                s.apply_client_state(client_state, c.teams.size());
+                has_client_state = true;
+            }
+        }
+        if (!has_client_state)
+        {
+            s.problem_number += 1;
+            s.default_type = req_type;
+        }
+        s.current_type = req_type;
+        s.current_id = total_id;
+        s.shown_at = static_cast<std::int64_t>(std::time(nullptr));
+        s.info_id = 0;
+        s.show_answer = false;
+        s.discarded = false;
+        s.confirm_pending = false;
+    });
+
+    return render_problem_html(req_type, total_id, p_content, p_info, p_ans);
+}
+
+void competition_display_session_handler::init()
+{
+    address = "/main/competition/display/session";
+
+    is_request_login = true;
+}
+std::string competition_display_session_handler::generate_response()
+{
+    if (params.find("guid") == params.end())
+        return "fail : guid not found";
+
+    competition c;
+    c.load(params["guid"]);
+
+    if (c.teams.size() == 0)
+        return "fail : guid not existed";
+
+    if (c.competition_status != competition::status::ONGOING)
+        return "fail : competition isn't ongoing";
+
+    bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
+        if (params.find("state") != params.end())
+        {
+            json client_state = json::parse(params["state"], nullptr, false);
+            if (client_state.is_object())
+                s.apply_client_state(client_state, c.teams.size());
+        }
+
+        if (params.find("timer_action") != params.end())
+        {
+            const std::string& action = params["timer_action"];
+            int parsed = 0;
+            if (params.find("timer_mode") != params.end() && try_parse_int(params["timer_mode"], parsed))
+                s.timer_mode = std::clamp(parsed, 0, 2);
+
+            if (action == "start")
+            {
+                if (params.find("timer_duration") != params.end() && try_parse_int(params["timer_duration"], parsed))
+                    s.timer_duration = std::max(0, parsed);
+                s.timer_started_at = static_cast<std::int64_t>(std::time(nullptr));
+                s.timer_paused = false;
+                s.timer_remaining = 0;
+            }
+            else if (action == "pause")
+            {
+                if (params.find("timer_remaining") != params.end() && try_parse_int(params["timer_remaining"], parsed))
+                    s.timer_remaining = std::max(0, parsed);
+                s.timer_started_at = 0;
+                s.timer_paused = true;
+            }
+            else if (action == "stop")
+            {
+                s.timer_started_at = 0;
+                s.timer_paused = false;
+                s.timer_remaining = 0;
+                s.timer_duration = 0;
+                s.timer_mode = 0;
+            }
+        }
+    });
+
+    return saved ? "success" : "fail : can't write session.json";
 }
 
 void competition_enddisplay_handler::init()
@@ -1533,14 +1789,20 @@ std::string competition_enddisplay_handler::generate_response()
         return "fail : action not found";
     }
 
-    switch (std::stoi(params["action"]))
+    int action_val = -1;
+    if (!try_parse_int(params["action"], action_val))
+        return "fail : invalid action";
+
+    switch (action_val)
     {
     case 0:
         c.competition_status = competition::status::PAUSED;
+        competition_session::clear(c.guid);
         break;
 
     case 1:
         c.competition_status = competition::status::FINISHED;
+        competition_session::clear(c.guid);
         break;
     }
     c.save();

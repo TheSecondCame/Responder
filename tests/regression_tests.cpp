@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "responder_problem.h"
+#include "responder_competition.h"
 #include "logging.h"
 
 namespace fs = std::filesystem;
@@ -138,6 +139,92 @@ static void TestDeleteDuplicatesPreservesUsed()
     assert(pl.completion_problems[1].second == 0);
 }
 
+static void TestCompetitionSessionLifecycle(const fs::path& workdir)
+{
+    fs::create_directories(workdir / "data" / "competitions");
+    competition c;
+    c.guid = "test-session-guid";
+    c.name = "Session Test";
+    c.description = "Regression";
+    c.teams = { { "Alpha", 'A' }, { "Beta", 'B' }, { "Gamma", 'C' } };
+    c.team_scores = { 0, 0, 0 };
+    c.competition_status = competition::ONGOING;
+    c.choice_count = 5;
+    c.save();
+
+    competition loaded_legacy;
+    loaded_legacy.load(c.guid);
+    assert(loaded_legacy.last_problem_type == -1);
+    assert(loaded_legacy.last_problem_id == 0);
+
+    c.last_problem_type = 0;
+    c.last_problem_id = 123;
+    c.save();
+
+    competition loaded_comp;
+    loaded_comp.load(c.guid);
+    assert(loaded_comp.last_problem_type == 0);
+    assert(loaded_comp.last_problem_id == 123);
+
+    competition_session empty_session;
+    assert(!empty_session.load(c.guid, c.teams.size()));
+    assert(empty_session.round_team == 3);
+    assert(empty_session.team_order == std::vector<int>({ 0, 1, 2 }));
+
+    assert(competition_session::update(c.guid, c.teams.size(), [](competition_session& s, bool existed) {
+        assert(!existed);
+        s.current_type = 0;
+        s.current_id = 123;
+        s.shown_at = 1763670000;
+        s.timer_started_at = 1763670012;
+        s.timer_duration = 15;
+        s.timer_mode = 0;
+        json client_state = {
+            { "round_team", 2 },
+            { "round_team_cnt", 2 },
+            { "round_count", 15 },
+            { "mode", "round" },
+            { "auto_scoring", true },
+            { "problem_number", 7 },
+            { "info_id", 2 },
+            { "show_answer", true },
+            { "team_order", { 2, 0, 1 } }
+        };
+        s.apply_client_state(client_state, 3);
+    }));
+
+    competition_session restored;
+    assert(restored.load(c.guid, c.teams.size()));
+    assert(restored.current_type == 0);
+    assert(restored.current_id == 123);
+    assert(restored.shown_at == 1763670000);
+    assert(restored.round_team == 2);
+    assert(restored.round_count == 15);
+    assert(restored.mode == "round");
+    assert(restored.timer_started_at == 1763670012);
+    assert(restored.timer_duration == 15);
+    assert(restored.auto_scoring == true);
+    assert(restored.problem_number == 7);
+    assert(restored.info_id == 2);
+    assert(restored.show_answer == true);
+    assert(restored.team_order == std::vector<int>({ 2, 0, 1 }));
+
+    // apply_client_state must not overwrite server-owned current_id or accept malformed team_order
+    json bad_client = {
+        { "current_id", 0 },
+        { "team_order", { 99, 0, 1 } },
+        { "round_team", 1 }
+    };
+    restored.apply_client_state(bad_client, c.teams.size());
+    assert(restored.current_id == 123);
+    assert(restored.round_team == 1);
+    assert(restored.team_order == std::vector<int>({ 0, 1, 2 }));
+
+    competition_session::clear(c.guid);
+    competition_session after_clear;
+    assert(!after_clear.load(c.guid, c.teams.size()));
+}
+
 static void TestLogging()
 {
     std::streambuf* orig_cout = std::cout.rdbuf();
@@ -174,6 +261,7 @@ int main()
 
     TestProblemListLifecycle(temp_dir);
     TestDeleteDuplicatesPreservesUsed();
+    TestCompetitionSessionLifecycle(temp_dir);
     TestLogging();
 
     fs::current_path(orig_cwd);
