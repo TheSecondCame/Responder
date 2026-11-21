@@ -280,6 +280,13 @@ namespace
 		}
 	}
 
+	COLORREF Blend(COLORREF from, COLORREF to, float weight)
+	{
+		auto mix = [weight](int a, int b) { return int(a + (b - a) * weight + 0.5f); };
+		return RGB(mix(GetRValue(from), GetRValue(to)), mix(GetGValue(from), GetGValue(to)),
+			mix(GetBValue(from), GetBValue(to)));
+	}
+
 	float EaseOutCubic(float t)
 	{
 		float u = 1.0f - std::clamp(t, 0.0f, 1.0f);
@@ -1346,13 +1353,6 @@ namespace
 	};
 	std::map<HWND, ButtonMotion> motions;
 	constexpr UINT_PTR motionTimer = 0x5354;
-
-	COLORREF Blend(COLORREF from, COLORREF to, float weight)
-	{
-		auto mix = [weight](int a, int b) { return int(a + (b - a) * weight + 0.5f); };
-		return RGB(mix(GetRValue(from), GetRValue(to)), mix(GetGValue(from), GetGValue(to)),
-			mix(GetBValue(from), GetBValue(to)));
-	}
 
 	void AnimateButton(HWND button, ButtonMotion& motion, bool inside, bool down)
 	{
