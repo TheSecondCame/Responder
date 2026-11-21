@@ -1,0 +1,19 @@
+name: Build Responder x64
+on:
+  push:
+    branches: [build/pr13-7bacd74]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compile Release x64
+        run: msbuild "Responder by STA.slnx" /m /p:Configuration=Release /p:Platform=x64 /p:PreBuildEventUseInBuild=false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Responder-x64-7bacd74
+          path: x64/Release/Server.exe
+          if-no-files-found: error
