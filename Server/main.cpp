@@ -4,6 +4,7 @@
 // Copyright (C) 2023-2026 Science & Technology Association of Chengdu No.7 High School (STA). All Rights Reserved.
 
 #include <Windows.h>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include "server_core.h"
@@ -36,6 +37,68 @@ static void EnableDpiAwareness()
 		setCtx((void*)-2); // DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
 }
 
+static BOOL WINAPI ConsoleCtrlHandler(DWORD ctrl_type)
+{
+	switch (ctrl_type)
+	{
+	case CTRL_C_EVENT:
+	case CTRL_BREAK_EVENT:
+		if (!server_core::is_running())
+			return FALSE;
+		server_core::stop();
+		return TRUE;
+	case CTRL_CLOSE_EVENT:
+		server_core::stop();
+		return FALSE;
+	default:
+		return FALSE;
+	}
+}
+
+// Windows 子系统进程在 --console 模式下优先附着父控制台，失败时再新建控制台并绑定未重定向的标准流。
+static void SetupConsole()
+{
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD outType = (hOut && hOut != INVALID_HANDLE_VALUE) ? GetFileType(hOut) : FILE_TYPE_UNKNOWN;
+	bool outRedirected = (outType == FILE_TYPE_DISK || outType == FILE_TYPE_PIPE);
+
+	HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+	DWORD errType = (hErr && hErr != INVALID_HANDLE_VALUE) ? GetFileType(hErr) : FILE_TYPE_UNKNOWN;
+	bool errRedirected = (errType == FILE_TYPE_DISK || errType == FILE_TYPE_PIPE);
+
+	HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+	DWORD inType = (hIn && hIn != INVALID_HANDLE_VALUE) ? GetFileType(hIn) : FILE_TYPE_UNKNOWN;
+	bool inRedirected = (inType == FILE_TYPE_DISK || inType == FILE_TYPE_PIPE);
+
+	if ((!outRedirected || !errRedirected || !inRedirected) && !GetConsoleWindow())
+	{
+		if (!AttachConsole(ATTACH_PARENT_PROCESS))
+			AllocConsole();
+	}
+
+	if (outRedirected)
+		SetStdHandle(STD_OUTPUT_HANDLE, hOut);
+	if (errRedirected)
+		SetStdHandle(STD_ERROR_HANDLE, hErr);
+	if (inRedirected)
+		SetStdHandle(STD_INPUT_HANDLE, hIn);
+
+	FILE* fp = nullptr;
+	if (!outRedirected)
+		freopen_s(&fp, "CONOUT$", "w", stdout);
+	if (!errRedirected)
+		freopen_s(&fp, "CONOUT$", "w", stderr);
+	if (!inRedirected)
+		freopen_s(&fp, "CONIN$", "r", stdin);
+
+	if (GetConsoleWindow())
+	{
+		SetConsoleOutputCP(CP_UTF8);
+		SetConsoleCP(CP_UTF8);
+		SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
+	}
+}
+
 int main(int argc, char** argv)
 {
 	SetupWorkingDirectory();
@@ -49,8 +112,10 @@ int main(int argc, char** argv)
 			console_mode = true;
 	}
 
-	// 接管 std::cout / std::cerr：写入 server.log，并供窗口显示；
-	// 图形模式下同时隐藏控制台窗口。
+	if (console_mode)
+		SetupConsole();
+
+	// 接管 std::cout / std::cerr：写入 server.log，并供窗口或控制台显示。
 	logging::setup(console_mode ? 0 : 1);
 
 	server_core::initialize();
