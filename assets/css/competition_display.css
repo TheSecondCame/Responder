@@ -1,123 +1,454 @@
+/* Responder 比赛大屏专用样式：无官网冗余壳、视口自适应、高对比度投屏 */
 
-.quiz-container {
-    margin-top: 10px;
+body.display-body {
+  background: var(--r-bg);
+  color: var(--r-text);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.display-shell {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ====== 极简投屏顶栏 ====== */
+.display-topbar {
+  flex-shrink: 0;
+  height: 52px;
+  background: var(--r-surface);
+  border-bottom: 1px solid var(--r-border);
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.display-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.display-live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--r-success-soft);
+  border: 1px solid var(--r-success-border);
+  color: var(--r-success);
+  font-size: clamp(13px, 0.85vw, 17px);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.display-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--r-success);
+  animation: display-pulse 2s infinite;
+}
+
+@keyframes display-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+
+.display-title {
+  margin: 0;
+  font-size: clamp(16px, 1.4vw, 20px);
+  font-weight: 700;
+  color: var(--r-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.display-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.display-clock {
+  font-family: var(--r-font-mono);
+  font-size: clamp(14px, 0.9vw, 18px);
+  font-weight: 600;
+  color: var(--r-text-sub);
+  background: var(--r-field);
+  border: 1px solid var(--r-border);
+  border-radius: 8px;
+  padding: 5px 11px;
+}
+
+/* ====== 主舞台网格 ====== */
+.display-stage {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 31vw, 430px);
+  gap: 14px;
+  padding: 14px 18px 16px;
 }
 
 .quiz-card {
-    padding: 16px !important;
-    border-radius: 10px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  background: var(--r-surface);
+  border: 1px solid var(--r-border);
+  border-radius: var(--r-radius-card);
+  padding: 16px 20px;
+  box-shadow: var(--r-shadow-card);
 }
 
-/* ====== 标题栏 ====== */
+.quiz-question-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.display-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ====== 卡片标题栏 ====== */
 .quiz-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 18px;
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #EEF2F7;
 }
 
 .quiz-header h3 {
-    margin-bottom: 0 !important;
-    padding-bottom: 10px !important;
-    font-size: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--r-text);
 }
 
-/* ====== 题目区域 ====== */
+/* ====== 题目区（视口自适应 + 1080p 垂直居中均衡） ====== */
 .quiz-problem {
-    height: 440px;
-    overflow-y: auto;
-    padding-right: 5px;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 6px 6px 2px;
+  display: flex;
+  flex-direction: column;
+}
+
+#problemarea {
+  margin: auto 0;
 }
 
 .quiz-question {
-    font-size: 22px;
-    font-weight: 600;
-    margin-bottom: 10px;
+  font-size: clamp(23px, 2.25vw, 38px);
+  font-weight: 700;
+  line-height: 1.46;
+  color: #0F172A;
+  margin-bottom: clamp(16px, 2.2vh, 28px);
+  word-break: break-word;
 }
 
 .quiz-option {
-    font-size: 20px;
-    margin: 6px 0;
+  background: var(--r-field);
+  border: 1px solid var(--r-border);
+  border-radius: 10px;
+  padding: clamp(11px, 1.35vh, 18px) clamp(16px, 1.5vw, 24px);
+  margin: 0 0 clamp(10px, 1.2vh, 16px) 0;
+  font-size: clamp(19px, 1.7vw, 29px);
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--r-text);
 }
 
-/* ====== 倒计时 ====== */
-.quiz-timer {
-    text-align: center;
-    font-size: 52px;
-    font-weight: bold;
-    letter-spacing: 2px;
-    margin: 10px 0;
+.quiz-option-tag {
+  display: inline-block;
+  font-weight: 800;
+  font-size: 0.86em;
+  color: var(--r-accent-active);
+  background: var(--r-accent-soft);
+  border: 1px solid var(--r-accent-border);
+  border-radius: 7px;
+  padding: 2px 11px;
+  margin-right: 12px;
+  vertical-align: baseline;
 }
 
-
-/* ====== 比分区域表格 ====== */
-.quiz-score-card {
-    padding: 12px;
+.quiz-option-text {
+  display: inline;
+  word-break: break-word;
 }
 
-.table th,
-.table td {
-    vertical-align: middle;
-    text-align: center;
-    /* 确保所有单元格居中 */
+.quiz-answer-box {
+  margin-top: clamp(16px, 2vh, 24px);
+  padding: clamp(14px, 1.6vh, 20px) clamp(18px, 1.6vw, 24px);
+  background: #ECFDF5;
+  border: 2px solid #10B981;
+  border-radius: 12px;
 }
 
-.table th {
-    font-size: 15px;
-    font-weight: 500;
+.quiz-answer-label {
+  margin-bottom: 6px;
 }
 
-.quiz-team-name {
-    font-size: 18px;
-    font-weight: 500;
+.quiz-answer-text {
+  font-size: clamp(22px, 2.05vw, 34px);
+  font-weight: 700;
+  color: #065F46;
+  line-height: 1.4;
 }
 
-.quiz-team-score {
-    font-size: 26px;
-    font-weight: bold;
-}
-
-.quiz-team-actions button {
-    padding: 2px 6px;
-}
-
-/* ====== 等待区域 ====== */
+/* ====== 等待界面 ====== */
 .quiz-center {
-    text-align: center;
-    padding: 120px 0;
+  height: 100%;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--r-text-sub);
+}
+
+.quiz-waiting-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--r-accent-soft);
+  border: 1px solid var(--r-accent-border);
+  color: var(--r-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  margin-bottom: 16px;
+}
+
+.quiz-center h1 {
+  font-size: clamp(22px, 2vw, 28px);
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.quiz-center p {
+  font-size: 15px;
+  color: var(--r-text-muted);
+  margin: 0;
+}
+
+/* ====== 右侧抢答 / 轮答 / 计时面板 ====== */
+.quiz-timer-card {
+  flex-shrink: 0;
 }
 
 .quiz-panel {
-    text-align: center;
+  text-align: center;
 }
 
-/* 抢答 */
 .quiz-responder-text {
-    background: #f8f9fa;
-    border-radius: 8px;
-    font-size: 40px;
-    font-weight: 600;
-    min-height: 36px;
-
-    height: 85px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+  background: #F1F5F9;
+  border: 1.5px solid var(--r-border);
+  border-radius: 12px;
+  min-height: clamp(64px, 8.8vh, 88px);
+  padding: 10px 14px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
+
+.quiz-responder-text #NowInfo {
+  font-size: clamp(24px, 2.2vw, 34px);
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--r-text-sub);
+}
+
 .quiz-responder-text p {
-    font-size: 17px;
-    font-weight: 400;
-    margin-bottom: 0px !important;
+  font-size: clamp(14px, 0.9vw, 18px);
+  font-weight: 600;
+  margin: 4px 0 0 !important;
+  color: var(--r-text-muted);
 }
 
-/* 倒计时 */
+.quiz-responder-text[data-state="active"] {
+  background: #EFF6FF;
+  border-color: var(--r-accent);
+  box-shadow: 0 0 0 4px rgba(29, 99, 220, 0.14);
+}
+
+.quiz-responder-text[data-state="active"] #NowInfo {
+  color: var(--r-accent-active);
+}
+
+.quiz-responder-text[data-state="locked"] {
+  background: var(--r-accent);
+  border-color: var(--r-accent-active);
+  box-shadow: 0 6px 18px rgba(29, 99, 220, 0.26);
+}
+
+.quiz-responder-text[data-state="locked"] #NowInfo,
+.quiz-responder-text[data-state="locked"] p {
+  color: #FFFFFF;
+}
+
 .quiz-timer-main {
-    font-size: 30px;
-    font-weight: 400;
+  font-family: var(--r-font-mono);
+  font-size: clamp(32px, 3.1vw, 46px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--r-text);
+  margin: 8px 0 10px;
+  line-height: 1.05;
 }
 
 .quiz-timer-only-main {
-    font-size: 60px;
-    font-weight: bold;
+  font-family: var(--r-font-mono);
+  font-size: clamp(44px, 4.2vw, 62px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--r-text);
+  margin: 12px 0 14px;
+  line-height: 1.05;
+}
+
+.quiz-timer-main[data-urgent="true"],
+.quiz-timer-only-main[data-urgent="true"] {
+  color: var(--r-danger);
+}
+
+.quiz-panel-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+.quiz-panel-controls .btn {
+  min-width: 46px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+/* ====== 比分板 ====== */
+.quiz-score-card {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px 18px;
+}
+
+.quiz-score-header {
+  margin-bottom: 8px;
+  padding-bottom: 10px;
+}
+
+.quiz-score-sub {
+  font-size: clamp(13px, 0.85vw, 17px);
+  color: var(--r-text-muted);
+}
+
+.quiz-score-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.quiz-score-table {
+  margin-bottom: 0;
+}
+
+.quiz-score-table th,
+.quiz-score-table td {
+  vertical-align: middle;
+  text-align: center;
+}
+
+.quiz-score-table th {
+  font-size: clamp(13px, 0.85vw, 17px);
+  font-weight: 700;
+  padding: 7px 8px;
+}
+
+.quiz-team-row {
+  border-radius: 8px;
+  transition: background-color 0.15s ease;
+}
+
+.quiz-team-row.is-active-team td {
+  background-color: var(--r-accent-soft);
+}
+
+.quiz-team-row.is-active-team td:first-child {
+  box-shadow: inset 3px 0 0 var(--r-accent);
+  color: var(--r-accent-active);
+}
+
+.quiz-team-name {
+  font-size: clamp(15px, 1.25vw, 18px);
+  font-weight: 700;
+  color: var(--r-text);
+  padding: 9px 8px !important;
+}
+
+.quiz-team-score {
+  font-family: var(--r-font-mono);
+  font-size: clamp(22px, 1.9vw, 28px);
+  font-weight: 800;
+  color: var(--r-danger);
+  padding: 6px 8px !important;
+}
+
+.quiz-team-actions {
+  padding: 6px 4px !important;
+}
+
+.quiz-team-actions .btn {
+  padding: 4px 8px;
+}
+
+/* ====== 窄屏 / 平板响应式降级 ====== */
+@media (max-width: 991.98px) {
+  body.display-body {
+    overflow-y: auto;
+  }
+
+  .display-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .display-stage {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .quiz-problem {
+    min-height: 320px;
+    max-height: 60vh;
+  }
 }

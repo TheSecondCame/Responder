@@ -23,9 +23,8 @@ static void SetupWorkingDirectory()
 	SetCurrentDirectoryA(dir.c_str());
 }
 
-// 声明为「系统 DPI 感知」并在窗口内自行按比例缩放。
-// 不用 per-monitor：那种模式下 GetSystemMetrics 返回逻辑值，需要额外做
-// 物理/逻辑坐标换算；这里统一用系统 DPI 比例缩放布局，简单且行为可预期。
+// 优先声明「Per-Monitor v2 DPI 感知」，以便跨屏拖动或系统调整缩放后接收 WM_DPICHANGED；
+// 旧系统不支持时逐级回退到 Per-Monitor / System DPI 感知。
 static void EnableDpiAwareness()
 {
 	HMODULE user32 = GetModuleHandleW(L"user32.dll");
@@ -34,7 +33,11 @@ static void EnableDpiAwareness()
 	typedef BOOL(WINAPI* SetCtxFn)(void*);
 	auto setCtx = (SetCtxFn)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
 	if (setCtx)
-		setCtx((void*)-2); // DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
+	{
+		if (setCtx((void*)-4)) return; // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+		if (setCtx((void*)-3)) return; // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE
+		setCtx((void*)-2);             // DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
+	}
 }
 
 static BOOL WINAPI ConsoleCtrlHandler(DWORD ctrl_type)

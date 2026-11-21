@@ -15,31 +15,57 @@ void welcome_page::init()
 {
     is_index_page = false;
     address = "/";
-    browser_title = "欢迎 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "欢迎 - Responder";
 
 	is_request_login = false;
 }
 void welcome_page::generate_page() // '/'
 {
     content = R"(
-  <!-- ======= Hero Section ======= -->
-  <section id="hero" class="d-flex align-items-center">
-    <div class="container" data-aos="zoom-out" data-aos-delay="100">
-      <h1>欢迎使用 <span>Responder</span></h1>
-      <h2>由STA开发的，简单易用的知识竞赛组织系统</h2>
-      <div class="d-flex">
-        <a href="/start" class="btn-get-started">开始使用</a>
+  <section class="console-welcome">
+    <div class="container">
+      <div class="console-welcome-hero">
+        <div class="console-welcome-badge">
+          <i class="bi bi-lightning-charge-fill"></i>
+          <span>成都七中科学技术协会 · 知识竞赛组织系统</span>
+        </div>
+        <h1 class="console-welcome-title">欢迎使用 <span>Responder</span></h1>
+        <p class="console-welcome-desc">面向校园知识竞赛与活动现场的轻量局域网控制台，集成题库管理、多队抢答轮答与自适应投屏大屏。</p>
+        <div class="d-flex flex-wrap gap-2">
+          <a href="/start" class="btn btn-primary btn-lg px-4">
+            <i class="bi bi-shield-lock"></i>
+            <span>输入 PIN 开始使用</span>
+          </a>
+        </div>
+
+        <div class="console-feature-grid">
+          <div class="console-feature-item">
+            <i class="bi bi-collection"></i>
+            <h4>本地题库管理</h4>
+            <p>支持选择、填空、信息三类题型的导入、查重、合并与自动备份。</p>
+          </div>
+          <div class="console-feature-item">
+            <i class="bi bi-stopwatch"></i>
+            <h4>抢答 / 轮答计分</h4>
+            <p>支持键盘抢答、自动轮次流转、提早抢答警告与自动加减分。</p>
+          </div>
+          <div class="console-feature-item">
+            <i class="bi bi-display"></i>
+            <h4>投屏大屏展示</h4>
+            <p>自适应现场投影仪与大屏分辨率，支持刷新恢复与高对比度播报。</p>
+          </div>
+        </div>
       </div>
     </div>
-  </section><!-- End Hero -->
-  <br>
+  </section>
 )";
 }
 
 void start_page::init()
 {
+    is_index_page = false;
     address = "/start";
-    browser_title = "开始 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "开始 - Responder";
     breadcrumb = "";
     page_title = "开始";
 
@@ -48,42 +74,36 @@ void start_page::init()
 void start_page::generate_page()
 {
     content = R"(
-  <!-- ======= Portfolio Details Section ======= -->
-  <section id="portfolio-details" class="portfolio-details">
+  <section class="console-welcome">
     <div class="container">
-
-    <div class="p-5 mb-4 bg-body-tertiary rounded-3">
-      <div class="container-fluid py-7">
-        <div class="row" style="display:flex; align-items:center; justify-content:center;">
-
-        <div class="col-lg-7">
-          <h1 class="display-7 fw-bold">开始</h1>
-          <p class="fs-6">请使用服务端程序上提供的一次性 6 位 PIN 码登录 Responder 。</p>
-        </div>
-        <div class="col-lg-5">
-          <div class="portfolio-info">
-            <h3>身份验证</h3>
-            <ul>
-			  <p>请输入PIN码，验证您的访问权限。</p>
-              <form class="pinlogin" method="post">
-                <div class="form-floating mb-3">
-                  <input class="form-control form-control-lg rounded-3 text-primary" type="number" name="pin" id="pin" autocomplete="off" required>
-                  <label for="PIN">PIN</label>
-                </div>
-                <button type="submit" class="btn btn-primary" id="submitbutton">确定</button>
-              </form>
-
-            </ul>
+      <div class="console-login-wrap">
+        <div class="console-card p-4 p-md-5">
+          <div class="row g-4 align-items-center">
+            <div class="col-lg-6">
+              <div class="console-welcome-badge mb-3">
+                <i class="bi bi-key-fill"></i>
+                <span>一次性身份验证</span>
+              </div>
+              <h1 class="fs-2 fw-bold mb-2">登录控制台</h1>
+              <p class="text-secondary mb-0">请在桌面管理端「服务管理」卡片或命令行日志中查看 6 位登录 PIN 码并输入验证。</p>
+            </div>
+            <div class="col-lg-6">
+              <div class="p-4 rounded-3" style="background: var(--r-field); border: 1px solid var(--r-border);">
+                <form class="pinlogin" method="post">
+                  <label for="pin" class="form-label fw-semibold mb-2">6 位登录 PIN</label>
+                  <input class="form-control console-pin-input mb-3" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" name="pin" id="pin" placeholder="输入 6 位数字" autocomplete="off" autofocus required>
+                  <button type="submit" class="btn btn-primary w-100 py-2" id="submitbutton">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                    <span>验证并进入</span>
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
         </div>
-
-        </div>
-
       </div>
     </div>
-
-    </div>
-  </section><!-- End Portfolio Details Section -->
+  </section>
 
   <script>
     function getCookie(cname) {
@@ -142,9 +162,9 @@ std::string login_handler::generate_response()
 void main_page::init()
 {
     address = "/main";
-    browser_title = "主页 - Responder | 简单易用的知识竞赛组织系统";
+    browser_title = "主页 - Responder";
     breadcrumb = "";
-    page_title = "主页";
+    page_title = "控制台主页";
 
 	is_request_login = true;
 }
@@ -160,28 +180,44 @@ void main_page::generate_page()
 	int info_unused = problem_list::count_unused(pl.info_problems);
 
     content = (std::string)R"(
-<div class="row d-flex align-items-stretch">
+<div class="row g-4 align-items-stretch">
 
   <div class="col-lg-4 d-flex">
-    <div class="p-5 mb-4 bg-body-tertiary w-100" style="display:flex; align-items:center; justify-content:center;">
-      <div class="container-fluid py-7">
-        <h1 class="display-7 fw-bold" style="font-family: 'Poppins', sans-serif;">欢迎使用 <span class="text-primary">Responder</span></h1>
-        <p class="fs-6">这是一个由成都七中科学技术协会开发，用于服务学校科技活动月等场景下的知识竞答比赛的专用系统。</p>
+    <div class="console-card w-100 d-flex flex-column justify-content-between">
+      <div>
+        <div class="console-welcome-badge mb-3">
+          <i class="bi bi-lightning-charge-fill"></i>
+          <span>Responder 控制台</span>
+        </div>
+        <h2 class="fs-4 fw-bold mb-2">竞赛组织工作台</h2>
+        <p class="text-secondary mb-4" style="font-size:14px; line-height:1.6;">
+          由成都七中科学技术协会开发，适用于校园知识竞答比赛的赛前出题、现场抢答轮答与实时计分。
+        </p>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <a href="/main/competition/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 新建比赛</a>
+        <a href="/main/problems" class="btn btn-outline-primary btn-sm"><i class="bi bi-collection"></i> 管理题库</a>
       </div>
     </div>
   </div>
 
-  <div class="col-lg-4 d-flex" style="margin-bottom:25px">
-    <div class="portfolio-info w-100">
-      <h3>题目</h3>
+  <div class="col-lg-4 d-flex">
+    <div class="console-card w-100">
+      <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
+        <h3 class="mb-0 border-0 pb-0" style="font-size:16px;font-weight:700;">题库存量</h3>
+        <a href="/main/problems" class="btn btn-outline-primary btn-sm">详情</a>
+      </div>
       <table class="table table-hover">
+      <thead>
       <tr>
-        <th>类型</th>
-        <th>剩余数量</th>
+        <th>题型</th>
+        <th>可用 / 总数</th>
       </tr>
+      </thead>
+      <tbody>
       <tr>
         <td>选择题</td>
-        <td>
+        <td class="tabular-nums">
           )" + std::to_string(choice_unused) + R"( / )" + std::to_string(choice_total) + R"(
           <div class="progress" role="progressbar">
             <div class="progress-bar" style="width: )" + std::to_string(choice_total == 0 ? 0 : (int)round((double)choice_unused / choice_total * 100)) + R"(%"></div>
@@ -190,7 +226,7 @@ void main_page::generate_page()
       </tr>
       <tr>
         <td>填空题</td>
-        <td>
+        <td class="tabular-nums">
           )" + std::to_string(completion_unused) + R"( / )" + std::to_string(completion_total) + R"(
           <div class="progress" role="progressbar">
             <div class="progress-bar" style="width: )" + std::to_string(completion_total == 0 ? 0 : (int)round((double)completion_unused / completion_total * 100)) + R"(%"></div>
@@ -199,34 +235,34 @@ void main_page::generate_page()
       </tr>
       <tr>
         <td>信息题</td>
-        <td>
+        <td class="tabular-nums">
           )" + std::to_string(info_unused) + R"( / )" + std::to_string(info_total) + R"(
           <div class="progress" role="progressbar">
             <div class="progress-bar" style="width: )" + std::to_string(info_total == 0 ? 0 : (int)round((double)info_unused / info_total * 100)) + R"(%"></div>
           </div>
         </td>
       </tr>
+      </tbody>
       </table>
     </div> 
   </div>
 
-  <div class="col-lg-4 d-flex" style="margin-bottom:25px">
-    <div class="portfolio-info w-100">
-      <div class="row">
-        <div class="col-md">
-          <h3>比赛列表</h3>
-        </div>
-        <div class="col-md" align="right">
-          <a href="/main/competition/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> 新建比赛</a>
-        </div>
+  <div class="col-lg-4 d-flex">
+    <div class="console-card w-100">
+      <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
+        <h3 class="mb-0 border-0 pb-0" style="font-size:16px;font-weight:700;">比赛列表</h3>
+        <a href="/main/competition/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 新建比赛</a>
       </div>
-      <div style="overflow:auto; height:250px">
-      <table class="table table-hover" >
+      <div style="overflow:auto; max-height:260px">
+      <table class="table table-hover">
+      <thead>
       <tr>
         <th>名称</th>
         <th>状态</th>
         <th>操作</th>
       </tr>
+      </thead>
+      <tbody>
 )";
 
     auto comlist = load_competition_list("data/competitions/list.json");
@@ -254,18 +290,19 @@ void main_page::generate_page()
 
         content += R"(
       <tr>
-        <td>)" + c.name + R"(</td>
+        <td class="fw-semibold">)" + c.name + R"(</td>
         <td>)" + status + R"(</td>
-        <td><a href="/main/competition/detail?guid=)" + c.guid + R"(" class="btn btn-primary btn-sm">管理</a></td>
+        <td><a href="/main/competition/detail?guid=)" + c.guid + R"(" class="btn btn-outline-primary btn-sm">管理</a></td>
       </tr>)";
     }
 
     content += R"(
+      </tbody>
       </table>
 )";
 
     if (comlist.size() == 0)
-		content += "<p align=\"center\"> 暂无比赛。</p>";
+		content += R"(<div class="text-center text-secondary py-4" style="font-size:14px;">暂无比赛，点击右上角「新建比赛」开始。</div>)";
 
     content += R"(
       </div> 

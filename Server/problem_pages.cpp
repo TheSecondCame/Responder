@@ -61,13 +61,17 @@ namespace
 	{
 		return R"(
           <table class="table table-hover">
-            <tr>
-              <th>题型</th>
-              <th>剩余 / 总数</th>
-              <th>已使用</th>
-              <th>比例</th>
-            </tr>
-            )" + problem_stats_rows() + R"(
+            <thead>
+              <tr>
+                <th>题型</th>
+                <th>剩余 / 总数</th>
+                <th>已使用</th>
+                <th>比例</th>
+              </tr>
+            </thead>
+            <tbody>
+              )" + problem_stats_rows() + R"(
+            </tbody>
           </table>)";
 	}
 
@@ -97,7 +101,7 @@ namespace
 void problem_manage_page::init()
 {
 	address = "/main/problems";
-	browser_title = "题库管理 - Responder | 简单易用的知识竞赛组织系统";
+	browser_title = "题库管理 - Responder";
 	breadcrumb = R"(<li><a href="/main">主页</a></li><li>题库管理</li>)";
 	page_title = "题库管理";
 
@@ -109,24 +113,20 @@ void problem_manage_page::generate_page()
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
 	content = R"(
-  <!-- ======= Portfolio Details Section ======= -->
-  <section id="portfolio-details" class="portfolio-details">
-    <div class="container">
+    <div class="row g-4 align-items-stretch">
 
-    <div class="row d-flex align-items-stretch">
-
-      <div class="col-lg-5 d-flex" style="margin-bottom:25px">
-        <div class="portfolio-info w-100">
-          <h3>题库存量</h3>
-          <p class="fs-6">「剩余」指尚未在任何比赛中使用过的题目数量。比赛抽题只会从未使用的题目中选取。</p>
+      <div class="col-lg-5 d-flex">
+        <div class="console-card w-100">
+          <h3 class="console-card-header">题库存量</h3>
+          <p class="text-secondary mb-3" style="font-size:14px;">「剩余」指尚未在任何比赛中使用过的题目数量。比赛抽题只会从未使用的题目中选取。</p>
 )" + problem_stats_table() + R"(
         </div>
       </div>
 
-      <div class="col-lg-7 d-flex" style="margin-bottom:25px">
-        <div class="portfolio-info w-100">
-          <h3>题库操作</h3>
-          <p class="fs-6">导入用的 txt 格式：第一行为「复杂度 类型」（复杂度 1–3；类型 0=选择题、1=填空题、2=信息题），其后依次为题干、选项或线索、答案。</p>
+      <div class="col-lg-7 d-flex">
+        <div class="console-card w-100">
+          <h3 class="console-card-header">题库操作</h3>
+          <p class="text-secondary mb-3" style="font-size:14px;">导入用的 txt 格式：第一行为「复杂度 类型」（复杂度 1–3；类型 0=选择题、1=填空题、2=信息题），其后依次为题干、选项或线索、答案。</p>
 
           <form method="post" action="/main/problems" enctype="multipart/form-data" id="problemForm">
             <div class="table-responsive">
@@ -187,8 +187,8 @@ void problem_manage_page::generate_page()
 
           <hr class="my-4">
 
-          <h3>备份与恢复</h3>
-          <p class="fs-6 mb-2">备份目录：<code>data/problems_backup/</code>。恢复方式：停止服务端，把备份内容复制回 <code>data/problems/</code>，再重新启动。</p>
+          <h3 class="console-card-header mt-4">备份与恢复</h3>
+          <p class="text-secondary mb-3" style="font-size:14px;">备份目录：<code>data/problems_backup/</code>。恢复方式：停止服务端，把备份内容复制回 <code>data/problems/</code>，再重新启动。</p>
           <form method="post" action="/main/problems">
             <input type="hidden" name="action" value="backup">
             <button type="submit" class="btn btn-outline-primary btn-sm">
@@ -200,9 +200,6 @@ void problem_manage_page::generate_page()
       </div>
 
     </div>
-
-    </div>
-  </section><!-- End Portfolio Details Section -->
 
   <script>
     function syncFileRequirement() {
@@ -224,7 +221,7 @@ void problem_manage_page::generate_page()
 void problem_manage_handler::init()
 {
 	address = "/main/problems";
-	browser_title = "题库管理 - Responder | 简单易用的知识竞赛组织系统";
+	browser_title = "题库管理 - Responder";
 	breadcrumb = R"(<li><a href="/main">主页</a></li><li>题库管理</li>)";
 	page_title = "题库管理";
 
@@ -361,35 +358,23 @@ void problem_manage_handler::generate_page()
 	exec_log = log.str();
 
 	content = R"(
-  <section id="portfolio-details" class="portfolio-details">
-    <div class="container">
-
-    <div class="alert )" + alert_class + R"( d-flex align-items-center" role="alert">
+    <div class="alert )" + alert_class + R"( d-flex align-items-center mb-4" role="alert">
       <i class="bi )" + alert_icon + R"( me-2"></i>
       <div><strong>)" + result_title + R"(</strong> —— )" + result_summary + R"(</div>
     </div>
 
-    <div class="row d-flex align-items-stretch">
-      <div class="col-lg-12 d-flex" style="margin-bottom:25px">
-        <div class="portfolio-info w-100">
-          <h3>操作后的题库存量</h3>
+    <div class="console-card mb-4">
+      <h3 class="console-card-header">操作后的题库存量</h3>
 )" + problem_stats_table() + R"(
-        </div>
-      </div>
     </div>
 
-    <div class="row d-flex align-items-stretch">
-      <div class="col-lg-12 d-flex" style="margin-bottom:25px">
-        <div class="portfolio-info w-100">
-          <h3>执行日志</h3>
-          <pre class="bg-body-tertiary p-3 rounded" style="max-height:320px;overflow:auto;font-size:13px;">)" + exec_log + R"(</pre>
-          <a href="/main/problems" class="btn btn-primary"><i class="bi bi-arrow-left"></i> 返回题库管理</a>
-          <a href="/main" class="btn btn-outline-secondary">回到主页</a>
-        </div>
+    <div class="console-card">
+      <h3 class="console-card-header">执行日志</h3>
+      <pre class="console-log-pre mb-3">)" + exec_log + R"(</pre>
+      <div class="d-flex flex-wrap gap-2">
+        <a href="/main/problems" class="btn btn-primary"><i class="bi bi-arrow-left"></i> 返回题库管理</a>
+        <a href="/main" class="btn btn-outline-primary">回到主页</a>
       </div>
     </div>
-
-    </div>
-  </section>
 )";
 }

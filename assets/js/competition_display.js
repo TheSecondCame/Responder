@@ -27,6 +27,9 @@ function synchronization() {
 var int = self.setInterval("synchronization() ", 1000);
 
 // 控制页面全屏
+function isFullScreenActive() {
+    return !!(document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement);
+}
 function requestFullScreen(element) {
     var de = document.querySelector(element) || document.documentElement;
     if (de.requestFullscreen) {
@@ -37,15 +40,58 @@ function requestFullScreen(element) {
         de.webkitRequestFullScreen();
     }
 }
-function exitFullscreen(element) {
-    var de = document.querySelector(element) || document.documentElement;
-    if (de.exitFullscreen) {
-        de.exitFullscreen();
-    } else if (de.mozCancelFullScreen) {
-        de.mozCancelFullScreen();
-    } else if (de.webkitCancelFullScreen) {
-        de.webkitCancelFullScreen();
+function exitFullscreen() {
+    if (!isFullScreenActive()) return;
+    if (document.exitFullscreen) {
+        document.exitFullscreen();
+    } else if (document.mozCancelFullScreen) {
+        document.mozCancelFullScreen();
+    } else if (document.webkitCancelFullScreen) {
+        document.webkitCancelFullScreen();
     }
+}
+function toggleFullScreen() {
+    if (isFullScreenActive()) {
+        exitFullscreen();
+    } else {
+        requestFullScreen();
+    }
+}
+function syncFullscreenButton() {
+    var btn = document.getElementById('fullscreenToggle');
+    if (!btn) return;
+    var active = isFullScreenActive();
+    btn.innerHTML = active
+        ? '<i class="bi bi-fullscreen-exit"></i><span class="d-none d-sm-inline">退出全屏</span>'
+        : '<i class="bi bi-arrows-fullscreen"></i><span class="d-none d-sm-inline">全屏</span>';
+}
+document.addEventListener('fullscreenchange', syncFullscreenButton);
+document.addEventListener('webkitfullscreenchange', syncFullscreenButton);
+
+function updateDisplayVisualState() {
+    var responderBox = document.getElementById('Responder1');
+    if (responderBox) {
+        var state = 'idle';
+        if (typeof SelectedTeam !== 'undefined' && SelectedTeam > 0) {
+            state = 'locked';
+        } else if (typeof Responding !== 'undefined' && Responding == 1) {
+            state = 'active';
+        }
+        responderBox.setAttribute('data-state', state);
+    }
+
+    var timerEl = document.getElementById('Timer1');
+    if (timerEl) {
+        var urgent = (typeof IsStarted !== 'undefined' && IsStarted == 1
+            && typeof IsPaused !== 'undefined' && IsPaused == 0
+            && typeof Seconds !== 'undefined' && Seconds > 0 && Seconds <= 5);
+        timerEl.setAttribute('data-urgent', urgent ? 'true' : 'false');
+    }
+
+    var rows = document.querySelectorAll('.quiz-team-row');
+    rows.forEach(function (row, idx) {
+        row.classList.toggle('is-active-team', typeof SelectedTeam !== 'undefined' && SelectedTeam === idx + 1);
+    });
 }
 
 // 提示型警告弹窗：默认3秒后自动关闭，函数在弹窗关闭后才返回
@@ -131,28 +177,22 @@ document.addEventListener('DOMContentLoaded', function () {
     incorrectToast = new bootstrap.Toast(document.getElementById('incorrectAns'));
     hintToast = new bootstrap.Toast(document.getElementById('autoScoringHint'));
     manualhintToast = new bootstrap.Toast(document.getElementById('manualScoringHint'));
+    synchronization();
     restoreSessionOnLoad();
+    updateDisplayVisualState();
 });
 
 // 开始比赛
 Swal.fire({
-    title: "进入全屏",
-    text: "是否自动进入全屏模式并尝试强行适配UI尺寸？",
-    icon: "warning",
+    title: "进入全屏投屏",
+    text: "是否切换至全屏模式展示比赛大屏？",
+    icon: "question",
     showCancelButton: true,
-    confirmButtonText: "确定",
-    cancelButtonText: "取消",
+    confirmButtonText: "进入全屏",
+    cancelButtonText: "暂不",
 })
     .then((Fullscreen) => {
         if (Fullscreen.isConfirmed) {
-            function bodyScale() {
-                var devicewidth = document.documentElement.clientWidth;
-                var scale = devicewidth / 1470; // TODO: for 16:9 only, adjust if using 4:3 or 16:10 screens
-                document.body.style.zoom = scale;
-            }
-            window.onload = window.onresize = function () {
-                bodyScale();
-            };
             requestFullScreen();
         }
         if (typeof has_initial_session === 'undefined' || !has_initial_session) {
@@ -193,6 +233,7 @@ function Sec2Time(Second) {
 function Interval_setTime(Time) {
     Seconds = Time;
     document.getElementById("NowTime").innerHTML = Sec2Time(Time);
+    updateDisplayVisualState();
 }
 
 var IntervalMode = 0;
@@ -218,6 +259,7 @@ function Interval_Start() {
 
         IntervalID = setInterval(Interval_Counting, 1000);
         IsStarted = 1;
+        updateDisplayVisualState();
         syncSession({ timer_action: 'start', timer_duration: Seconds, timer_mode: IntervalMode });
     }
     else {
@@ -225,18 +267,23 @@ function Interval_Start() {
             clearInterval(IntervalID);
             document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
             IsPaused = 1;
+            updateDisplayVisualState();
             syncSession({ timer_action: 'pause', timer_remaining: Seconds, timer_mode: IntervalMode });
         }
         else {
             IntervalID = setInterval(Interval_Counting, 1000);
             document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-pause-fill'>";
             IsPaused = 0;
+            updateDisplayVisualState();
             syncSession({ timer_action: 'start', timer_duration: Seconds, timer_mode: IntervalMode });
         }
     }
 }
 function Interval_Stop() {
     clearInterval(IntervalID);
+    IsPaused = 0;
+    IsStarted = 0;
+    IntervalMode = 0;
     Interval_setTime(defaultTime);
     if (IsResponderFlowRunning == 1 || IsRoundFlowRunning == 1) {
         Interval_setTime(timeBefore);
@@ -245,10 +292,8 @@ function Interval_Stop() {
     document.getElementById("IntervalSet").disabled = false;
     document.getElementById("IntervalStop").disabled = true;
 
-    IsPaused = 0;
-    IsStarted = 0;
-    IntervalMode = 0;
     document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
+    updateDisplayVisualState();
     syncSession({ timer_action: 'stop' });
 }
 function Interval_Finish() {
@@ -259,6 +304,7 @@ function Interval_Finish() {
 function Interval_Counting() {
     Seconds--;
     document.getElementById("NowTime").innerHTML = Sec2Time(Seconds);
+    updateDisplayVisualState();
 
     if (Seconds == 0) {
         clearInterval(IntervalID);
@@ -268,6 +314,7 @@ function Interval_Counting() {
         document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
 
         document.getElementById("IntervalStop").disabled = true;
+        updateDisplayVisualState();
 
         if (IntervalMode == 0) {
             audioTimer.play();
@@ -418,6 +465,7 @@ function RoundFlow() {
     } else {
         document.getElementById('RoundInfo').innerHTML = "第" + Round_Team_Cnt + "位次，第" + (Team_Problems_Count + 1) + "题";
     }
+    updateDisplayVisualState();
 
     confirmAnsToast.hide();
     correctToast.hide();
@@ -473,6 +521,7 @@ function ResponderFlow() {
         }
 
         IsResponderFlowRunning = 0;
+        updateDisplayVisualState();
         syncSession({ timer_action: 'stop' });
         return;
     }
@@ -491,6 +540,7 @@ function ResponderFlow() {
     } else {
         SwitchResponder();
     }
+    updateDisplayVisualState();
 }
 // 切换抢答状态
 function SwitchResponder() {
@@ -511,6 +561,7 @@ function SwitchResponder() {
     }
 
     Responding = !Responding;
+    updateDisplayVisualState();
     syncSession({ timer_action: 'stop' });
 }
 // 键盘事件监听抢答
@@ -584,6 +635,7 @@ document.onkeydown = async function () {
 
     Responding = 0;
     document.getElementById('NowInfo').innerHTML = Teams[SelectedTeam - 1];
+    updateDisplayVisualState();
 
     audioRing.play();
 
@@ -646,11 +698,11 @@ function SwitchTimerMode(ID) {
 
             document.getElementById('RoundInfo').style.display = "block";
             document.getElementById('Responder1').style.display = "grid";
-            document.getElementById('Timer1').className = "quiz-timer-main";
+            document.getElementById('Timer1').className = "quiz-timer-main tabular-nums";
 
             document.getElementById('ResponderControls').style.display = "none";
             document.getElementById('TimerControls').style.display = "none";
-            document.getElementById('RoundControls').style.display = "block";
+            document.getElementById('RoundControls').style.display = "flex";
 
             IsRoundDelayed = 1; // 防止弃用题目导致轮答流程出现问题
 
@@ -664,11 +716,11 @@ function SwitchTimerMode(ID) {
 
             document.getElementById('RoundInfo').style.display = "none";
             document.getElementById('Responder1').style.display = "none";
-            document.getElementById('Timer1').className = "quiz-timer-only-main";
+            document.getElementById('Timer1').className = "quiz-timer-only-main tabular-nums";
 
             document.getElementById('ResponderControls').style.display = "none";
             document.getElementById('RoundControls').style.display = "none";
-            document.getElementById('TimerControls').style.display = "block";
+            document.getElementById('TimerControls').style.display = "flex";
 
             Interval_setTime(defaultTime);
             sortTeamsByKeyAsc();
@@ -690,9 +742,9 @@ function SwitchTimerMode(ID) {
 
         document.getElementById('RoundInfo').style.display = "none";
         document.getElementById('Responder1').style.display = "grid";
-        document.getElementById('Timer1').className = "quiz-timer-main";
+        document.getElementById('Timer1').className = "quiz-timer-main tabular-nums";
 
-        document.getElementById('ResponderControls').style.display = "block";
+        document.getElementById('ResponderControls').style.display = "flex";
         document.getElementById('RoundControls').style.display = "none";
         document.getElementById('TimerControls').style.display = "none";
 
@@ -700,6 +752,7 @@ function SwitchTimerMode(ID) {
         sortTeamsByKeyAsc();
     }
     ResponderTimerMode = !ResponderTimerMode;
+    updateDisplayVisualState();
 }
 // 设置倒计时时间
 function showSecondInput() {
@@ -1011,6 +1064,7 @@ function resetResponderAndTimer() {
     if (ResponderTimerMode == 1) {
         Interval_setTime(timeBefore);
     }
+    updateDisplayVisualState();
 }
 
 /* -- 题目显示模块 -- */
@@ -1082,7 +1136,9 @@ function applyRenderedProblem(html, type, opts) {
     if (typeof opts.problemNumber === 'number') {
         ProblemID = opts.problemNumber;
     }
-    document.getElementById('problemtitle').innerHTML = "第" + ProblemID + "题";
+    var titleBadge = document.getElementById('problemtitle');
+    titleBadge.innerHTML = "第" + ProblemID + "题";
+    titleBadge.style.display = "inline-block";
 
     if (CurrentProblemType != 0) {
         document.getElementById('d1area').style.display = "none";
@@ -1097,16 +1153,16 @@ function applyRenderedProblem(html, type, opts) {
     }
 
     if (CurrentProblemType != 2) {
-        document.getElementById('ta').innerHTML = "A.&nbsp";
-        document.getElementById('tb').innerHTML = "B.&nbsp";
-        document.getElementById('tc').innerHTML = "C.&nbsp";
-        document.getElementById('td').innerHTML = "D.&nbsp";
+        document.getElementById('ta').innerHTML = "A.";
+        document.getElementById('tb').innerHTML = "B.";
+        document.getElementById('tc').innerHTML = "C.";
+        document.getElementById('td').innerHTML = "D.";
         document.getElementById('nextinfo').disabled = true;
     } else {
-        document.getElementById('ta').innerHTML = "信息1&nbsp";
-        document.getElementById('tb').innerHTML = "信息2&nbsp";
-        document.getElementById('tc').innerHTML = "信息3&nbsp";
-        document.getElementById('td').innerHTML = "信息4&nbsp";
+        document.getElementById('ta').innerHTML = "信息 1";
+        document.getElementById('tb').innerHTML = "信息 2";
+        document.getElementById('tc').innerHTML = "信息 3";
+        document.getElementById('td').innerHTML = "信息 4";
 
         var restoredInfoId = (typeof opts.infoId === 'number') ? Math.max(0, Math.min(4, opts.infoId)) : 0;
         if (showAnswer) {
@@ -1680,6 +1736,7 @@ function refreshTeamTableDisplay() {
         }
         setteambuttons(i);
     }
+    updateDisplayVisualState();
 }
 /**
  * 根据scores从大到小排序，当scores相同时按team_keys从小到大排序
@@ -1943,8 +2000,8 @@ function restoreSessionOnLoad() {
             document.getElementById('changetimermode').innerHTML = IsAutoScoring == 1 ? "切换轮答" : "切换计时";
             document.getElementById('RoundInfo').style.display = "none";
             document.getElementById('Responder1').style.display = "grid";
-            document.getElementById('Timer1').className = "quiz-timer-main";
-            document.getElementById('ResponderControls').style.display = "block";
+            document.getElementById('Timer1').className = "quiz-timer-main tabular-nums";
+            document.getElementById('ResponderControls').style.display = "flex";
             document.getElementById('RoundControls').style.display = "none";
             document.getElementById('TimerControls').style.display = "none";
 
@@ -1960,10 +2017,10 @@ function restoreSessionOnLoad() {
             document.getElementById('changetimermode').innerHTML = "切换抢答";
             document.getElementById('RoundInfo').style.display = "block";
             document.getElementById('Responder1').style.display = "grid";
-            document.getElementById('Timer1').className = "quiz-timer-main";
+            document.getElementById('Timer1').className = "quiz-timer-main tabular-nums";
             document.getElementById('ResponderControls').style.display = "none";
             document.getElementById('TimerControls').style.display = "none";
-            document.getElementById('RoundControls').style.display = "block";
+            document.getElementById('RoundControls').style.display = "flex";
 
             if (SelectedTeam > 0 && SelectedTeam <= Teams.length) {
                 document.getElementById('NowInfo').innerHTML = Teams[SelectedTeam - 1];
@@ -1982,10 +2039,10 @@ function restoreSessionOnLoad() {
             document.getElementById('changetimermode').innerHTML = "切换抢答";
             document.getElementById('RoundInfo').style.display = "none";
             document.getElementById('Responder1').style.display = "none";
-            document.getElementById('Timer1').className = "quiz-timer-only-main";
+            document.getElementById('Timer1').className = "quiz-timer-only-main tabular-nums";
             document.getElementById('ResponderControls').style.display = "none";
             document.getElementById('RoundControls').style.display = "none";
-            document.getElementById('TimerControls').style.display = "block";
+            document.getElementById('TimerControls').style.display = "flex";
         }
 
         if (typeof initial_problem_html === 'string' && initial_problem_html.length > 0 && s.current_id > 0) {
@@ -2049,12 +2106,12 @@ function restoreSessionOnLoad() {
                 }
 
                 IntervalMode = (typeof s.timer_mode === 'number') ? s.timer_mode : 0;
-                Interval_setTime(remaining);
                 document.getElementById("IntervalSet").disabled = true;
                 document.getElementById("IntervalStop").disabled = false;
                 document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-pause-fill'>";
                 IsStarted = 1;
                 IsPaused = 0;
+                Interval_setTime(remaining);
                 IntervalID = setInterval(Interval_Counting, 1000);
                 notyf.success("已恢复当前题目与计时（剩余 " + remaining + " 秒）");
             } else if (hasUnsavedLatestDraw && mode === "round" && s.round_flow_running && RoundAnswering == 0) {
@@ -2105,12 +2162,12 @@ function restoreSessionOnLoad() {
             }
 
             IntervalMode = (typeof s.timer_mode === 'number') ? s.timer_mode : 0;
-            Interval_setTime(s.timer_remaining);
             document.getElementById("IntervalSet").disabled = true;
             document.getElementById("IntervalStop").disabled = false;
             document.getElementById('IntervalStart').innerHTML = "<i class='bi bi-play-fill'>";
             IsStarted = 1;
             IsPaused = 1;
+            Interval_setTime(s.timer_remaining);
             notyf.success("已恢复当前状态（计时已暂停，可点击继续或重新开始）");
         } else if (mode === "responder" && s.responding) {
             IsResponderFlowRunning = 1;
@@ -2139,6 +2196,7 @@ function restoreSessionOnLoad() {
                 notyf.success("已恢复当前题目与轮次进度");
             }
         }
+        updateDisplayVisualState();
     } finally {
         isRestoringSession = false;
     }

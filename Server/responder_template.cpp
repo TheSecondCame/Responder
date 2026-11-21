@@ -36,39 +36,43 @@ std::string get_compile_info()
     return compile_info;
 }
 
-// TODO: 替换部分冗余的旧版代码
+// 统一控制台页面模板
 std::string output_html_code(std::string _browser_title, std::string _breadcrumb, std::string _page_title, 
     std::string _content, int _is_index_page, bool is_login_required)
 {
     if (_is_index_page) // PT_INDEX
+    {
+        std::string breadcrumb_html;
+        if (!_breadcrumb.empty())
+            breadcrumb_html = "<ol class=\"console-breadcrumb\">" + _breadcrumb + "</ol>";
+
         return output_html_code(_browser_title, _breadcrumb, _page_title, R"(
-  <main id="main" data-aos="fade-up">
-
-    <!-- ======= Breadcrumbs ======= -->
-    <section class="breadcrumbs">
+  <main id="main" class="console-main">
+    <section class="console-page-header">
       <div class="container">
-
-        <div class="d-flex justify-content-between align-items-center">
-          <h2>)" + _page_title + R"(</h2>
+        <div class="console-page-header-inner">
+          <div>
+            )" + breadcrumb_html + R"(
+            <h1 class="console-page-title">)" + _page_title + R"(</h1>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="portfolio-details" class="portfolio-details">
+    <section class="console-content">
       <div class="container">
 )" + _content + R"(
       </div>
     </section>
-
-  </main><!-- End #main -->
+  </main>
 )", false, is_login_required);
+    }
 
-    std::string TopTitle = "成都七中科学技术协会", Email = "cdqz_sta@qq.com";
+    std::string home_href = is_login_required ? "/main" : "/";
 
     // PT_FRAME
-    return R"(
-<!DOCTYPE html>
-<html lang="zh">
+    return R"(<!DOCTYPE html>
+<html lang="zh-CN">
 
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
@@ -77,97 +81,82 @@ std::string output_html_code(std::string _browser_title, std::string _breadcrumb
   <title>)" + _browser_title + R"(</title>
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
 
-  <!-- Google Fonts -->
+  <!-- Local Fonts -->
   <link href="/assets/fonts/fonts.css" rel="stylesheet">
 
   <!-- Vendor CSS Files -->
-  <link href="/assets/vendor/aos/aos.css" rel="stylesheet">
   <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
   <link href="/assets/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
-  <link href="/assets/vendor/swiper/swiper-bundle.min.css" rel="stylesheet">
   <link href="/assets/vendor/notyf/notyf.min.css" rel="stylesheet">
 
-  <!-- Template Main CSS File -->
-  <link href="/assets/css/style.css" rel="stylesheet">
+  <!-- Console Main CSS File -->
+  <link href="/assets/css/style.css?)" + std::string(PROGRAM_BUILD_S) + R"(" rel="stylesheet">
 
   <!-- Addons JS File -->
   <script src="/assets/js/jquery-3.6.3.min.js"></script>
   <script src="/assets/js/sweetalert.min.js"></script>
-
 </head>
 
-<body>
-  <!-- ======= Top Bar ======= -->
-  <section id="topbar" class="d-flex align-items-center">
-    <div class="container d-flex justify-content-center justify-content-md-between">
-      <div class="contact-info d-flex align-items-center">
-        <i class="=d-flex align-items-center">)" + TopTitle + R"(</i>
-      </div>
-      <div class="social-links d-none d-md-flex align-items-center">
-        <a href="mailto:)" + Email + R"(" class="envelope"><i class="bi bi-envelope"></i></a>
-      </div>
-    </div>
-  </section>
+<body class="console-body">
 
-  <!-- ======= Header ======= -->
-  <header id="header" class="d-flex align-items-center">
+  <header id="header" class="console-header">
     <div class="container d-flex align-items-center justify-content-between">
-
-      <h1 class="logo"><a href="/main">Responder<span>.</span></a></h1>
+      <a class="console-brand" href=")" + home_href + R"(">
+        <span class="console-brand-mark"><i class="bi bi-lightning-charge-fill"></i></span>
+        <span class="console-brand-text">
+          <span class="console-brand-name">Responder<span>.</span></span>
+          <span class="console-brand-sub">STA / 竞赛控制台</span>
+        </span>
+      </a>
 )" + (is_login_required ? R"(
-      <nav id="navbar" class="navbar">
+      <nav id="navbar" class="console-nav">
         <ul>
-          <li><a class="nav-link" href="/main">主页</a></li>
-          <li><a class="nav-link" href="/main/problems">题库管理</a></li>
-          <li><a class="nav-link" href="/logout">退出</a></li>
+          <li><a class="nav-link" href="/main"><i class="bi bi-grid-1x2"></i><span>主页</span></a></li>
+          <li><a class="nav-link" href="/main/problems"><i class="bi bi-collection"></i><span>题库管理</span></a></li>
+          <li><a class="nav-link" href="/main/competition/new"><i class="bi bi-plus-circle"></i><span>新建比赛</span></a></li>
+          <li><a class="nav-link nav-link-logout" href="/logout"><i class="bi bi-box-arrow-right"></i><span>退出</span></a></li>
         </ul>
-        <i class="bi bi-list mobile-nav-toggle"></i>
-      </nav><!-- .navbar -->
-)" : "") + R"(
+        <button type="button" class="mobile-nav-toggle" aria-label="切换导航"><i class="bi bi-list"></i></button>
+      </nav>
+)" : R"(
+      <div class="console-header-meta d-none d-sm-flex align-items-center gap-2">
+        <span class="console-org-pill">成都七中科学技术协会</span>
+      </div>
+)") + R"(
     </div>
-  </header><!-- End Header -->
+  </header>
 
+  <div class="console-shell-body">
 )" + _content + R"(
+  </div>
 
-  <!-- ======= Footer ======= -->
-  <footer id="footer">
-    <div class="container py-4">
-      <div class="row justify-content-center">
-		<center>
-		  <br>
-		  <h4 style="font-family: 'Poppins', sans-serif;">Responder by STA</h4>
-		  <h5 style="font-family: 'Poppins', sans-serif;">版本 )" + VERSION + R"(</h5>)" +
+  <footer id="footer" class="console-footer">
+    <div class="container d-flex flex-column flex-md-row align-items-center justify-content-between gap-2">
+      <div class="console-footer-brand">
+        <strong>Responder by STA</strong>
+        <span>· 版本 )" + std::string(VERSION) + R"(</span>)" +
 #ifdef BETA
-            + "\n<p> 仅用于测试。版本 " + get_compile_info() + "</p>" +
+        "<span> · 测试版 " + get_compile_info() + "</span>" +
 #else
-            + "\n<p> 版本 " + get_compile_info() + "</p>" +
+        "<span> · " + get_compile_info() + "</span>" +
 #endif
-            R"(
-		  <br>
-          Copyright &copy; 2023-2026 <strong><span>Science &amp; Technology Association of Chengdu No.7 High School (STA)</span></strong>. All Rights Reserved.
-	    </center>
+        R"(
+      </div>
+      <div class="console-footer-copy">
+        &copy; 2023-2026 Science &amp; Technology Association of Chengdu No.7 High School (STA)
       </div>
     </div>
-  </footer><!-- End Footer -->
-
-  <div id="preloader"></div>
-  <a href="#" class="back-to-top d-flex align-items-center justify-content-center"><i class="bi bi-arrow-up-short"></i></a>
-
+  </footer>
 
   <!-- Vendor JS Files -->
-  <script src="/assets/vendor/aos/aos.js"></script>
   <script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-  <script src="/assets/vendor/isotope-layout/isotope.pkgd.min.js"></script>
-  <script src="/assets/vendor/swiper/swiper-bundle.min.js"></script>
-  <script src="/assets/vendor/waypoints/noframework.waypoints.js"></script>
   <script src="/assets/vendor/notyf/notyf.min.js"></script>
 
-  <!-- Template Main JS File -->
-  <script src="/assets/js/main.js"></script>
+  <!-- Console Main JS File -->
+  <script src="/assets/js/main.js?)" + std::string(PROGRAM_BUILD_S) + R"("></script>
 
 </body>
 
 </html>
 )";
-
 }

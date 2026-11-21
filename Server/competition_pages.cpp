@@ -56,15 +56,14 @@ namespace
 	{
 		return R"(
 <div id="problemMeta" data-type=")" + std::to_string(type) + R"(" data-id=")" + std::to_string(id) + R"(" hidden></div>
-<div class="h2" id="task">)" + p_content + R"(</div>
-<div class="h2" id="d1area"><b style="display:inline-block" id="ta"></b><div style="display:inline" id="data1">)" + p_info[1] + R"(</div></div>
-<div class="h2" id="d2area"><b style="display:inline-block" id="tb"></b><div style="display:inline" id="data2">)" + p_info[2] + R"(</div></div>
-<div class="h2" id="d3area"><b style="display:inline-block" id="tc"></b><div style="display:inline" id="data3">)" + p_info[3] + R"(</div></div>
-<div class="h2" id="d4area"><b style="display:inline-block" id="td"></b><div style="display:inline" id="data4">)" + p_info[4] + R"(</div></div>
-<br>
-<div id="ansarea">
-  <p class="h3"><span class="badge bg-success" id="answertitle">答案</span></p> 
-  <div class="h2"><b id="answer">)" + p_ans + R"(</b></div>
+<div class="quiz-question" id="task">)" + p_content + R"(</div>
+<div class="quiz-option" id="d1area"><span class="quiz-option-tag" id="ta"></span><div class="quiz-option-text" id="data1">)" + p_info[1] + R"(</div></div>
+<div class="quiz-option" id="d2area"><span class="quiz-option-tag" id="tb"></span><div class="quiz-option-text" id="data2">)" + p_info[2] + R"(</div></div>
+<div class="quiz-option" id="d3area"><span class="quiz-option-tag" id="tc"></span><div class="quiz-option-text" id="data3">)" + p_info[3] + R"(</div></div>
+<div class="quiz-option" id="d4area"><span class="quiz-option-tag" id="td"></span><div class="quiz-option-text" id="data4">)" + p_info[4] + R"(</div></div>
+<div id="ansarea" class="quiz-answer-box">
+  <div class="quiz-answer-label"><span class="badge bg-success" id="answertitle">答案</span></div>
+  <div class="quiz-answer-text"><b id="answer">)" + p_ans + R"(</b></div>
 </div>
 )";
 	}
@@ -125,8 +124,8 @@ namespace
 void new_competition_page::init()
 {
     address = "/main/competition/new";
-    browser_title = "新建比赛 - Responder | 简单易用的知识竞赛组织系统";
-    breadcrumb = "";
+    browser_title = "新建比赛 - Responder";
+    breadcrumb = R"(<li><a href="/main">主页</a></li><li>新建比赛</li>)";
     page_title = "新建比赛";
 
 	is_request_login = true;
@@ -136,11 +135,11 @@ void new_competition_page::generate_page()
 	std::lock_guard bank_lock(problem_bank_mutex);
     content = R"(
 <form id="newComForm" method="post" role="form" style="margin-bottom:25px" novalidate>
-<div class="row d-flex align-items-stretch">
+<div class="row g-4 align-items-stretch">
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <h3>基本信息</h3>
-      <p>在此处填写一些关于比赛的基础信息。</p>
+      <p class="text-secondary" style="font-size:14px;">在此处填写比赛名称与简介。</p>
       <div class="form-floating mb-3">
         <input class="form-control" name="name" id="competitionName" autocomplete="off" required>
         <label for="competitionName">比赛名称</label>
@@ -155,14 +154,13 @@ void new_competition_page::generate_page()
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <div class="row">
-        <div class="col-md">
+        <div class="col">
           <h3>参赛队伍</h3>
         </div>
-        <div class="col-md" align="right">
+        <div class="col-auto">
           <button class="btn btn-success btn-sm" type="button" id="addTeamBtn"><i class="bi bi-plus-lg"></i> 添加</button>
         </div>
       </div>
-      <!-- <p align="center" id="teamHint"> 点击“添加”以开始。</p> -->
       <table class="table table-sm table-hover">
         <thead>
           <tr>
@@ -181,7 +179,7 @@ void new_competition_page::generate_page()
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <h3>题目分配</h3>
-      <p>在此处初步分配比赛中使用的题目数量。</p>
+      <p class="text-secondary" style="font-size:14px;">在此处初步分配比赛中使用的题目数量。</p>
       <table class="table table-sm table-hover">
         <thead>
           <tr>
@@ -193,17 +191,17 @@ void new_competition_page::generate_page()
         <tbody>
           <tr>
             <td>选择题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="choiceCount" min="0" value="0" required></td>
           </tr>
           <tr>
             <td>填空题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="completionCount" min="0" value="0" required></td>
           </tr>
           <tr>
             <td>信息题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="infoCount" min="0" value="0" required></td>
           </tr>
         </tbody>
@@ -211,9 +209,9 @@ void new_competition_page::generate_page()
     </div> 
   </div>
 </div>
-<div class="d-grid gap-2 d-md-flex justify-content-md-end" style="margin-top:20px">
-  <a class="btn btn-lg btn-outline-primary" align="right" href="/main">取消</a>
-  <button class="btn btn-lg btn-success" align="right" type="submit">确定</button>
+<div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+  <a class="btn btn-outline-primary px-4" href="/main">取消</a>
+  <button class="btn btn-success px-4" type="submit"><i class="bi bi-check-lg"></i> 创建比赛</button>
 </div>
 </form>
 
@@ -258,7 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const newCell2 = document.createElement('td');
       let key = 65 + teamCount - 1; // 从 A 开始绑定按键
-      newCell2.innerHTML = String.fromCharCode(key);
+      newCell2.innerHTML = `<kbd class="r-kbd">${String.fromCharCode(key)}</kbd>`;
 
       // 将文本框放到新行的单元格中
       newCell.appendChild(teamInput);
@@ -371,17 +369,17 @@ void competition_edit_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 编辑比赛 - Responder | 简单易用的知识竞赛组织系统";
-    breadcrumb = "";
+    browser_title = c.name + " - 编辑比赛 - Responder";
+    breadcrumb = R"(<li><a href="/main">主页</a></li><li><a href="/main/competition/detail?guid=)" + c.guid + R"(">)" + c.name + R"(</a></li><li>编辑比赛</li>)";
     page_title = "<b>" + c.name + "</b> - 编辑比赛";
 
     content = (std::string)R"(
 <form id="newComForm" method="post" role="form" style="margin-bottom:25px" novalidate>
-<div class="row d-flex align-items-stretch">
+<div class="row g-4 align-items-stretch">
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <h3>基本信息</h3>
-      <p>在此处填写一些关于比赛的基础信息。</p>
+      <p class="text-secondary" style="font-size:14px;">在此处修改比赛名称与简介。</p>
       <div class="form-floating mb-3">
         <input class="form-control" name="name" id="competitionName" autocomplete="off" value=")" + c.name + R"(" required>
         <label for="competitionName">比赛名称</label>
@@ -396,14 +394,13 @@ void competition_edit_page::generate_page()
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <div class="row">
-        <div class="col-md">
+        <div class="col">
           <h3>参赛队伍</h3>
         </div>
-        <div class="col-md" align="right">
+        <div class="col-auto">
           <button class="btn btn-success btn-sm" type="button" id="addTeamBtn"><i class="bi bi-plus-lg"></i> 添加</button>
         </div>
       </div>
-      <!-- <p align="center" id="teamHint"> 点击“添加”以开始。</p> -->
       <table class="table table-sm table-hover">
         <thead>
           <tr>
@@ -419,7 +416,7 @@ void competition_edit_page::generate_page()
         content += R"(
 <tr><td><b>)" + std::to_string(i) + R"(</b></td><td>
 <input type="text" name="teamName)" + std::to_string(i) + R"(" class="form-control form-control-sm" placeholder="请输入第 )" + std::to_string(i) + R"( 个队伍名称" value=")" + c.teams[i - 1].first + R"(" autocomplete="off" required>
-</td><td>)" + c.teams[i - 1].second + R"(</td></tr>)";
+</td><td><kbd class="r-kbd">)" + c.teams[i - 1].second + R"(</kbd></td></tr>)";
 
     content += R"(
         </tbody>
@@ -430,7 +427,7 @@ void competition_edit_page::generate_page()
   <div class="col-lg-4 d-flex">
     <div class="portfolio-info w-100">
       <h3>题目分配</h3>
-      <p>在此处初步分配比赛中使用的题目数量。</p>
+      <p class="text-secondary" style="font-size:14px;">在此处调整比赛中使用的题目数量。</p>
       <table class="table table-sm table-hover">
         <thead>
           <tr>
@@ -442,17 +439,17 @@ void competition_edit_page::generate_page()
         <tbody>
           <tr>
             <td>选择题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="choiceCount" min="0" value=")" + std::to_string(c.choice_count) + R"(" required></td>
           </tr>
           <tr>
             <td>填空题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="completionCount" min="0" value=")" + std::to_string(c.completion_count) + R"(" required></td>
           </tr>
           <tr>
             <td>信息题</td>
-            <td>)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
+            <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
             <td><input type="number" class="form-control form-control-sm" name="infoCount" min="0" value=")" + std::to_string(c.info_count) + R"(" required></td>
           </tr>
         </tbody>
@@ -460,9 +457,9 @@ void competition_edit_page::generate_page()
     </div> 
   </div>
 </div>
-<div class="d-grid gap-2 d-md-flex justify-content-md-end" style="margin-top:20px">
-  <a class="btn btn-lg btn-outline-primary" align="right" href="/main/competition/detail?guid=)" + params["guid"] + R"(">取消</a>
-  <button class="btn btn-lg btn-success" align="right" type="submit">确定</button>
+<div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+  <a class="btn btn-outline-primary px-4" href="/main/competition/detail?guid=)" + params["guid"] + R"(">取消</a>
+  <button class="btn btn-success px-4" type="submit"><i class="bi bi-check-lg"></i> 保存修改</button>
 </div>
 </form>
 
@@ -507,7 +504,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const newCell2 = document.createElement('td');
       let key = 65 + teamCount - 1; // 从 A 开始绑定按键
-      newCell2.innerHTML = String.fromCharCode(key);
+      newCell2.innerHTML = `<kbd class="r-kbd">${String.fromCharCode(key)}</kbd>`;
 
       // 将文本框放到新行的单元格中
       newCell.appendChild(teamInput);
@@ -706,8 +703,8 @@ void competition_detail_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 比赛详情 - Responder | 简单易用的知识竞赛组织系统";
-    breadcrumb = "";
+    browser_title = c.name + " - 比赛详情 - Responder";
+    breadcrumb = R"(<li><a href="/main">主页</a></li><li>比赛详情</li>)";
     page_title = "<b>" + c.name + "</b> - 比赛详情";
 
     std::string status, result, problems;
@@ -734,69 +731,67 @@ void competition_detail_page::generate_page()
 
         result = R"(
               <table class="table table-hover">
-          		<tr>
+          		<thead><tr>
             	  <th>名次</th>
             	  <th>参赛队伍</th>
             	  <th>分数</th>
-          		</tr>)";
+          		</tr></thead><tbody>)";
 
         for (auto team : ranking)
             result += R"(
           		<tr>
-            	  <td><b>)" + ((team.score == -1) ? "--" : "#" + std::to_string(team.ranking)) + R"(</b></td>
-            	  <td>)" + team.team_name + R"(</td>
-            	  <td><b style="color:#dc3545;">)" + ((team.score == -1) ? "淘汰" : std::to_string(team.score)) + R"(</b></td>
+            	  <td class="tabular-nums"><b>)" + ((team.score == -1) ? "--" : "#" + std::to_string(team.ranking)) + R"(</b></td>
+            	  <td class="fw-semibold">)" + team.team_name + R"(</td>
+            	  <td class="tabular-nums"><b style="color:var(--r-danger);">)" + ((team.score == -1) ? "淘汰" : std::to_string(team.score)) + R"(</b></td>
           		</tr>)";
 
         result += R"(
-        	  </table>
+        	  </tbody></table>
 )";
     }
     else
     {
         result = R"(
-			  <ul>
-			    <li>比赛还未结束，暂无结果。</li>
-			  </ul>
+			  <p class="text-secondary mb-0" style="font-size:14px;">比赛还未结束，暂无最终排名结果。</p>
 )";
     }
 
     problems = R"(
 				<table class="table table-hover">
-          		<tr>
+          		<thead><tr>
             	  <th>题型</th>
             	  <th>预计使用数量</th>
             	  <th>实际使用数量</th>
             	  <th>题库剩余数量</th>
-          		</tr>
+          		</tr></thead><tbody>
           		<tr>
             	  <td>选择题</td>
-            	  <td>)" + std::to_string(c.choice_count) + R"(</td>
-            	  <td>)" + std::to_string(c.problems.choice_problems.size()) + R"(</td>
-            	  <td>)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.choice_count) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.problems.choice_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
           		</tr>
 				<tr>
             	  <td>填空题</td>
-            	  <td>)" + std::to_string(c.completion_count) + R"(</td>
-            	  <td>)" + std::to_string(c.problems.completion_problems.size()) + R"(</td>
-            	  <td>)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.completion_count) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.problems.completion_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
           		</tr>
 				<tr>
             	  <td>信息题</td>
-            	  <td>)" + std::to_string(c.info_count) + R"(</td>
-            	  <td>)" + std::to_string(c.problems.info_problems.size()) + R"(</td>
-            	  <td>)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.info_count) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(c.problems.info_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
           		</tr>
-        		</table>
+        		</tbody></table>
 )";
 
     content = R"(
-        <div class="row gy-4">
-          <div class="col-lg-8">
+        <div class="row g-4">
+          <div class="col-lg-8 d-flex flex-column gap-4">
 
-              <div class="row d-flex align-items-stretch">
+              <div class="row g-4 align-items-stretch">
 
-                <div class="col-lg d-flex">
+                <div class="col-md-6 d-flex">
   			      <div class="portfolio-info w-100">
                     <h3>基本信息</h3>
                     <ul>
@@ -806,8 +801,7 @@ void competition_detail_page::generate_page()
                     </ul>
                   </div> 
                 </div>
-                &nbsp;
-                <div class="col-lg d-flex">
+                <div class="col-md-6 d-flex">
   			      <div class="portfolio-info w-100">
                     <h3>参赛队伍</h3>
 )";
@@ -826,8 +820,8 @@ void competition_detail_page::generate_page()
         content += R"(
 <tr>
 <td><b>)" + std::to_string(i) + R"(</b></td>
-<td>)" + c.teams[i - 1].first + R"(</td>
-<td>)" + c.teams[i - 1].second + R"(</td>
+<td class="fw-semibold">)" + c.teams[i - 1].first + R"(</td>
+<td><kbd class="r-kbd">)" + c.teams[i - 1].second + R"(</kbd></td>
 </tr>)";
 
     content += R"(
@@ -840,29 +834,25 @@ void competition_detail_page::generate_page()
 
               </div>
 
-			<br>
 			<div class="portfolio-info">
               <h3>题目信息</h3>
-              <ul>
 )" + problems + R"(
-              </ul>
             </div>
           </div>
 
-          <div class="col-lg-4">
+          <div class="col-lg-4 d-flex flex-column gap-4">
             <div class="portfolio-info">
               <h3>操作</h3>
-              <ul>
-				<input class="btn btn-success my-2 my-sm-1" type="button" value="开始比赛" onclick="window.location.href='/main/competition/display?guid=)" + params["guid"] + R"(' ")" + ((c.competition_status == competition::status::NOT_STARTED || c.competition_status == competition::status::PAUSED) ? "" : " disabled=\"disabled\"") + R"(>
-				<input class="btn btn-outline-primary my-2 my-sm-1" type="button" value="编辑" onclick="window.location.href='/main/competition/edit?guid=)" + params["guid"] + R"(' ")" + ((c.competition_status != competition::status::NOT_STARTED) ? " disabled=\"disabled\"" : "") + R"(>
-				<input class="btn btn-outline-danger my-2 my-sm-1" type="button" value="删除" onclick="Delete() ")" + ((c.competition_status != competition::status::ONGOING) ? "" : " disabled=\"disabled\"") + R"(>
-              </ul>
+              <div class="d-flex flex-wrap gap-2">
+				<button class="btn btn-success" type="button" onclick="window.location.href='/main/competition/display?guid=)" + params["guid"] + R"('" )" + ((c.competition_status == competition::status::NOT_STARTED || c.competition_status == competition::status::PAUSED) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-display"></i> 进入比赛大屏</button>
+				<button class="btn btn-outline-primary" type="button" onclick="window.location.href='/main/competition/edit?guid=)" + params["guid"] + R"('" )" + ((c.competition_status != competition::status::NOT_STARTED) ? " disabled=\"disabled\"" : "") + R"(><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-outline-danger" type="button" onclick="Delete();" )" + ((c.competition_status != competition::status::ONGOING) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-trash"></i> 删除</button>
+              </div>
             </div>
-			  <br>
-			  <div class="portfolio-info">
+			<div class="portfolio-info">
               <h3>比赛结果</h3>
 )" + result + R"(
-              </div>
+            </div>
           </div>
 
         </div>
@@ -939,268 +929,231 @@ void competition_display_page::generate_page()
     }
 	std::int64_t server_now = static_cast<std::int64_t>(std::time(nullptr));
 
-    content = R"(
-<!DOCTYPE html>
-<html lang="zh">
+    content = R"(<!DOCTYPE html>
+<html lang="zh-CN">
 
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
 
-  <title>)" + c.name + R"( - 比赛进行中 - Responder | 简单易用的知识竞赛组织系统</title>
+  <title>)" + c.name + R"( - 比赛大屏 - Responder</title>
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
 
-  <!-- Google Fonts -->
+  <!-- Local Fonts -->
   <link href="/assets/fonts/fonts.css" rel="stylesheet">
 
   <!-- Vendor CSS Files -->
-  <link href="/assets/vendor/aos/aos.css" rel="stylesheet">
   <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
   <link href="/assets/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
-  <link href="/assets/vendor/swiper/swiper-bundle.min.css" rel="stylesheet">
   <link href="/assets/vendor/notyf/notyf.min.css" rel="stylesheet">
 
-  <!-- Template Main CSS File -->
-  <link href="/assets/css/style.css" rel="stylesheet">
-  <link href="/assets/css/competition_display.css?)" + PROGRAM_BUILD_S + R"(" rel="stylesheet">
+  <!-- Unified Console + Display CSS Files -->
+  <link href="/assets/css/style.css?)" + std::string(PROGRAM_BUILD_S) + R"(" rel="stylesheet">
+  <link href="/assets/css/competition_display.css?)" + std::string(PROGRAM_BUILD_S) + R"(" rel="stylesheet">
 
   <!-- Addons JS File -->
   <script src="/assets/js/jquery-3.6.3.min.js"></script>
   <script src="/assets/js/sweetalert2.js"></script>
-
 </head>
 
-<body>
+<body class="display-body user-select-none">
 
-  <!-- ======= Top Bar ======= -->
-  <section id="topbar" class="d-flex align-items-center">
-    <div class="container d-flex justify-content-center justify-content-md-between">
-      <div class="contact-info d-flex align-items-center">
-        <i class="=d-flex align-items-center">成都七中科学技术协会</i>
+  <div class="display-shell">
+    <!-- 极简大屏顶栏（无官网导航、无邮箱条） -->
+    <header class="display-topbar">
+      <div class="display-topbar-left">
+        <span class="display-live-pill">
+          <span class="display-live-dot"></span>
+          <span>比赛大屏</span>
+        </span>
+        <h1 class="display-title">)" + c.name + R"(</h1>
       </div>
-      <div class="social-links d-none d-md-flex align-items-center">
-        <div class="=d-flex align-items-center" id="time"></div>
+      <div class="display-topbar-right">
+        <div class="display-clock tabular-nums" id="time"></div>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="fullscreenToggle" onclick="toggleFullScreen();" title="切换全屏">
+          <i class="bi bi-arrows-fullscreen"></i>
+          <span class="d-none d-sm-inline">全屏</span>
+        </button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="EndCompetition();">
+          <i class="bi bi-power"></i>
+          <span>退出比赛</span>
+        </button>
       </div>
-    </div>
-  </section>
+    </header>
 
-  <main id="main">
+    <!-- 主舞台：左题面自适应视口，右控制/计分板 -->
+    <main class="display-stage">
+      <!-- 左侧题目卡 -->
+      <section class="quiz-card quiz-question-card">
+        <div class="quiz-header">
+          <div class="d-flex align-items-center gap-2">
+            <h3>题目区</h3>
+            <span class="badge bg-primary" id="problemtitle" style="display:none"></span>
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem() " id="reshowproblem" disabled>
+              <i class="bi bi-arrow-counterclockwise"></i> 重新显示上一题
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>
+              <i class="bi bi-lightbulb"></i> 下一信息
+            </button>
+            <button class="btn btn-outline-primary btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>
+              <i class="bi bi-eye"></i> 显示答案
+            </button>
 
-    <!-- ======= Breadcrumbs ======= -->
-    <section class="breadcrumbs">
-      <div class="container">
-
-        <div class="d-flex justify-content-between align-items-center">
-          <h2><b>)" + c.name + R"(</b></h2>
-          <ol>
-            <li><a class="btn btn-danger my-2 my-sm-0" onclick="EndCompetition() " title="">退出比赛</a></li>
-          </ol>
-        </div>
-      </div>
-    </section><!-- End Breadcrumbs -->
-
-    <!-- ======= Portfolio Details Section ======= -->
-    <section id="portfolio-details" class="portfolio-details">
-
-    <div class="container quiz-container user-select-none">
-      <div class="row gy-3">
-
-        <!-- 左侧题目 -->
-        <div class="col-lg-8">
-          <div class="portfolio-info quiz-card">
-
-            <div class="quiz-header">
-              <h3>题目</h3>
-              <div class="d-flex flex-wrap align-items-center gap-1">
-                <button class="btn btn-outline-secondary btn-sm" onclick="reshowLastProblem() " id="reshowproblem" disabled>重新显示上一题</button>
-                <button class="btn btn-primary btn-sm" onclick="ShowNextInfo() " id="nextinfo" disabled>下一信息</button>
-                <button class="btn btn-danger btn-sm" onclick="ShowAnswer() " id="showanswer" disabled>显示答案</button>
-
-                <div class="btn-group">
-                  <button class="btn btn-success btn-sm" id="nextproblem" onclick="buttonNextProblem() ">下一选择题</button>
-                  <button class="btn btn-success btn-sm" id="problemsettings" data-bs-toggle="modal" data-bs-target="#modalQuestionSettings"><i class="bi bi-gear-fill"></i></button>
-                </div>
-              </div>
-            </div>
-
-            <div aria-live="polite" aria-atomic="true" class="position-relative">
-              <div class="toast-container top-0 end-0 p-3" style="z-index:1000">
-
-                <!-- Then put toasts within -->
-                <div class="toast" id="confirmAns" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="false">
-                  <div class="toast-header">
-                    <strong class="me-auto">评价作答</strong>
-                    <small class="text-body-secondary">自动计分模块</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                  </div>
-                  <div class="toast-body">
-                    队伍 <b id="teamName_t1">Team</b> 是否答对了问题？
-                    <div class="mt-2 pt-2 border-top">
-                      <button type="button" class="btn btn-success btn-sm" onclick="autoScoring_Correct() ">是</button>
-                      <button type="button" class="btn btn-danger btn-sm" onclick="autoScoring_Incorrect() ">否</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="toast" id="correctAns" role="alert" aria-live="assertive" aria-atomic="true">
-                  <div class="toast-header">
-                    <strong class="me-auto">评价作答</strong>
-                    <small class="text-body-secondary">自动计分模块</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                  </div>
-                  <div class="toast-body">
-                    队伍 <b id="teamName_t2">Team</b> 作答<b class="text-success">正确</b><span id="correctScoreChange">，已自动加分</span>
-                  </div>
-                </div>
-
-                <div class="toast" id="incorrectAns" role="alert" aria-live="assertive" aria-atomic="true">
-                  <div class="toast-header">
-                    <strong class="me-auto">评价作答</strong>
-                    <small class="text-body-secondary">自动计分模块</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                  </div>
-                  <div class="toast-body">
-                    队伍 <b id="teamName_t3">Team</b> 作答<b class="text-danger">错误</b><span id="incorrectScoreChange">，已自动扣分</span>
-                  </div>
-                </div>
-
-                <div class="toast" id="autoScoringHint" role="alert" aria-live="assertive" aria-atomic="true">
-                  <div class="toast-header">
-                    <strong class="me-auto">提示</strong>
-                    <small class="text-body-secondary">自动计分模块</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                  </div>
-                  <div class="toast-body">
-                    <b>自动计分模块已经<span class="text-success">开启</span></b><br>可在抢答/轮答设置页调整相关设置。
-                  </div>
-                </div>
-                <div class="toast" id="manualScoringHint" role="alert" aria-live="assertive" aria-atomic="true">
-                  <div class="toast-header">
-                    <strong class="me-auto">提示</strong>
-                    <small class="text-body-secondary">自动计分模块</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                  </div>
-                  <div class="toast-body">
-                    <b>自动计分模块已经<span class="text-danger">关闭</span></b><br>可在抢答设置页重新开启。
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
-
-            <div id="problems" class="quiz-problem">
-
-              <div id="problemarea" style="display:none">
-
-                <p class="h3">
-                  <span class="badge bg-primary" id="problemtitle"></span>
-                </p>
-
-                <div id="dymproblemarea">
-
-                  <div class="quiz-question" id="task"></div>
-
-                  <div class="quiz-option" id="d1area">
-                    <b id="ta"></b> <span id="data1"></span>
-                  </div>
-
-                  <div class="quiz-option" id="d2area">
-                    <b id="tb"></b> <span id="data2"></span>
-                  </div>
-
-                  <div class="quiz-option" id="d3area">
-                    <b id="tc"></b> <span id="data3"></span>
-                  </div>
-
-                  <div class="quiz-option" id="d4area">
-                    <b id="td"></b> <span id="data4"></span>
-                  </div>
-
-                  <div id="ansarea" style="margin-top:15px;">
-                    <p class="h3">
-                      <span class="badge bg-success" id="answertitle">答案</span>
-                    </p>
-                    <div class="h2"><b id="answer"></b></div>
-                  </div>
-
-                </div>
-              </div>
-
-              <div id="waitingarea" class="quiz-center">
-                <h1>比赛即将开始，请耐心等待</h1>
-                <p>使用右侧“切换题目”开始</p>
-              </div>
-
+            <div class="btn-group">
+              <button class="btn btn-primary btn-sm" id="nextproblem" onclick="buttonNextProblem() ">下一选择题</button>
+              <button class="btn btn-primary btn-sm" id="problemsettings" data-bs-toggle="modal" data-bs-target="#modalQuestionSettings" title="题目设置"><i class="bi bi-gear-fill"></i></button>
             </div>
           </div>
         </div>
 
-        <!-- 右侧 -->
-        <div class="col-lg-4">
-
-          <div class="portfolio-info quiz-card">
-            <div class="quiz-header">
-              <h3 id="timertitle">抢答</h3>
-              <button class="btn btn-success btn-sm" id="changetimermode" onclick="buttonSwitchTimerMode() ">切换轮答</button>
+        <div aria-live="polite" aria-atomic="true" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1080">
+            <div class="toast" id="confirmAns" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="false">
+              <div class="toast-header">
+                <strong class="me-auto">评价作答</strong>
+                <small class="text-body-secondary">自动计分模块</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+              <div class="toast-body">
+                队伍 <b id="teamName_t1">Team</b> 是否答对了问题？
+                <div class="mt-2 pt-2 border-top d-flex gap-2">
+                  <button type="button" class="btn btn-success btn-sm" onclick="autoScoring_Correct() ">是</button>
+                  <button type="button" class="btn btn-danger btn-sm" onclick="autoScoring_Incorrect() ">否</button>
+                </div>
+              </div>
             </div>
 
-            <div class="quiz-panel" style="height:165px">
+            <div class="toast" id="correctAns" role="alert" aria-live="assertive" aria-atomic="true">
+              <div class="toast-header">
+                <strong class="me-auto">评价作答</strong>
+                <small class="text-body-secondary">自动计分模块</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+              <div class="toast-body">
+                队伍 <b id="teamName_t2">Team</b> 作答<b class="text-success">正确</b><span id="correctScoreChange">，已自动加分</span>
+              </div>
+            </div>
 
-              <div>
+            <div class="toast" id="incorrectAns" role="alert" aria-live="assertive" aria-atomic="true">
+              <div class="toast-header">
+                <strong class="me-auto">评价作答</strong>
+                <small class="text-body-secondary">自动计分模块</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+              <div class="toast-body">
+                队伍 <b id="teamName_t3">Team</b> 作答<b class="text-danger">错误</b><span id="incorrectScoreChange">，已自动扣分</span>
+              </div>
+            </div>
 
-                <div class="quiz-responder-text" id="Responder1">
-                  <span id="NowInfo">等待开始</span>
-                  <p id="RoundInfo" style="display:none">切换下一题以自动开始轮答</p>
-                </div>
+            <div class="toast" id="autoScoringHint" role="alert" aria-live="assertive" aria-atomic="true">
+              <div class="toast-header">
+                <strong class="me-auto">提示</strong>
+                <small class="text-body-secondary">自动计分模块</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+              <div class="toast-body">
+                <b>自动计分模块已经<span class="text-success">开启</span></b><br>可在抢答/轮答设置页调整相关设置。
+              </div>
+            </div>
 
-                <div class="quiz-timer-main" id="Timer1">
-                  <span id="NowTime">00:03</span>
-                </div>
+            <div class="toast" id="manualScoringHint" role="alert" aria-live="assertive" aria-atomic="true">
+              <div class="toast-header">
+                <strong class="me-auto">提示</strong>
+                <small class="text-body-secondary">自动计分模块</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+              </div>
+              <div class="toast-body">
+                <b>自动计分模块已经<span class="text-danger">关闭</span></b><br>可在抢答设置页重新开启。
+              </div>
+            </div>
+        </div>
 
-                <div class="quiz-panel-controls" id="ResponderControls">
-                  <button class="btn btn-success btn-sm" id="ResponderSwitcher" onclick="ResponderFlow() ">
-                    <i class="bi bi-play-fill"></i>
-                  </button>
-                  <button class="btn btn-primary btn-sm" id="ResponderSettings" onclick="SetResponder() ">
-                    <i class="bi bi-gear-fill"></i>
-                  </button>
-                </div>
-
-                <div class="quiz-panel-controls" id="RoundControls" style="display:none">
-                  <button class="btn btn-success btn-sm" id="RoundSwitcher" onclick="buttonSwitchRoundFlow() ">
-                    <i class="bi bi-play-fill"></i>
-                  </button>
-                  <button class="btn btn-primary btn-sm" id="RoundSettings" onclick="SetResponder() ">
-                    <i class="bi bi-gear-fill"></i>
-                  </button>
-                </div>
-
-                <div class="quiz-panel-controls" id="TimerControls" style="display:none">
-                  <button class="btn btn-success btn-sm" id="IntervalStart" onclick="Interval_Start() ">
-                    <i class="bi bi-play-fill"></i>
-                  </button>
-                  <button class="btn btn-primary btn-sm" id="IntervalSet" onclick="showSecondInput() ">
-                    <i class="bi bi-gear-fill"></i>
-                  </button>
-                  <button class="btn btn-danger btn-sm" id="IntervalStop" onclick="Interval_Stop() " disabled>
-                    <i class="bi bi-stop-fill"></i>
-                  </button>
-                </div>
-
+        <div id="problems" class="quiz-problem">
+          <div id="problemarea" style="display:none">
+            <div id="dymproblemarea">
+              <div class="quiz-question" id="task"></div>
+              <div class="quiz-option" id="d1area"><span class="quiz-option-tag" id="ta"></span><div class="quiz-option-text" id="data1"></div></div>
+              <div class="quiz-option" id="d2area"><span class="quiz-option-tag" id="tb"></span><div class="quiz-option-text" id="data2"></div></div>
+              <div class="quiz-option" id="d3area"><span class="quiz-option-tag" id="tc"></span><div class="quiz-option-text" id="data3"></div></div>
+              <div class="quiz-option" id="d4area"><span class="quiz-option-tag" id="td"></span><div class="quiz-option-text" id="data4"></div></div>
+              <div id="ansarea" class="quiz-answer-box">
+                <div class="quiz-answer-label"><span class="badge bg-success" id="answertitle">答案</span></div>
+                <div class="quiz-answer-text"><b id="answer"></b></div>
               </div>
             </div>
           </div>
 
-          <br>
+          <div id="waitingarea" class="quiz-center">
+            <div class="quiz-waiting-icon"><i class="bi bi-easel2"></i></div>
+            <h1>比赛即将开始，请耐心等待</h1>
+            <p>点击上方「下一选择题」或齿轮设置题型后开始答题</p>
+          </div>
+        </div>
+      </section>
 
-          <!-- 比分 -->
-          <div class="portfolio-info quiz-card quiz-score-card">
+      <!-- 右侧控制与计分板 -->
+      <aside class="display-sidebar">
+        <section class="quiz-card quiz-timer-card">
+          <div class="quiz-header">
+            <h3 id="timertitle">抢答</h3>
+            <button class="btn btn-outline-primary btn-sm" id="changetimermode" onclick="buttonSwitchTimerMode() ">切换轮答</button>
+          </div>
 
-            <table class="table table-sm table-borderless" style="margin-bottom:0px">
+          <div class="quiz-panel">
+            <div class="quiz-responder-text" id="Responder1" data-state="idle">
+              <span id="NowInfo">等待开始</span>
+              <p id="RoundInfo" style="display:none">切换下一题以自动开始轮答</p>
+            </div>
+
+            <div class="quiz-timer-main tabular-nums" id="Timer1">
+              <span id="NowTime">00:03</span>
+            </div>
+
+            <div class="quiz-panel-controls" id="ResponderControls">
+              <button class="btn btn-success btn-sm" id="ResponderSwitcher" onclick="ResponderFlow() ">
+                <i class="bi bi-play-fill"></i>
+              </button>
+              <button class="btn btn-primary btn-sm" id="ResponderSettings" onclick="SetResponder() ">
+                <i class="bi bi-gear-fill"></i>
+              </button>
+            </div>
+
+            <div class="quiz-panel-controls" id="RoundControls" style="display:none">
+              <button class="btn btn-success btn-sm" id="RoundSwitcher" onclick="buttonSwitchRoundFlow() ">
+                <i class="bi bi-play-fill"></i>
+              </button>
+              <button class="btn btn-primary btn-sm" id="RoundSettings" onclick="SetResponder() ">
+                <i class="bi bi-gear-fill"></i>
+              </button>
+            </div>
+
+            <div class="quiz-panel-controls" id="TimerControls" style="display:none">
+              <button class="btn btn-success btn-sm" id="IntervalStart" onclick="Interval_Start() ">
+                <i class="bi bi-play-fill"></i>
+              </button>
+              <button class="btn btn-primary btn-sm" id="IntervalSet" onclick="showSecondInput() ">
+                <i class="bi bi-gear-fill"></i>
+              </button>
+              <button class="btn btn-danger btn-sm" id="IntervalStop" onclick="Interval_Stop() " disabled>
+                <i class="bi bi-stop-fill"></i>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 实时比分 -->
+        <section class="quiz-card quiz-score-card">
+          <div class="quiz-header quiz-score-header">
+            <h3>实时比分</h3>
+            <span class="quiz-score-sub">按快捷键或右侧微调</span>
+          </div>
+
+          <div class="quiz-score-scroll">
+            <table class="table table-sm table-borderless quiz-score-table">
               <thead>
                 <tr>
-                  <th>参赛队伍</th>
+                  <th class="text-start">参赛队伍</th>
                   <th>分数</th>
                   <th>操作</th>
                 </tr>
@@ -1211,9 +1164,9 @@ void competition_display_page::generate_page()
 #define ID std::to_string(i)
     for (int i = 0; i < c.teams.size(); i++)
         content += R"(
-                <tr>
-                  <td class="quiz-team-name">)" + c.teams[i].first + R"(</td>
-                  <td class="quiz-team-score text-center" id="teamscore)" + ID + R"(" style="color: #dc3545;">)" + std::to_string(c.team_scores[i]) + R"(</td>
+                <tr class="quiz-team-row" data-team-row=")" + ID + R"(">
+                  <td class="quiz-team-name text-start">)" + c.teams[i].first + R"(</td>
+                  <td class="quiz-team-score text-center tabular-nums" id="teamscore)" + ID + R"(">)" + std::to_string(c.team_scores[i]) + R"(</td>
                   <td class="quiz-team-actions">
                     <div class="btn-group">
                       <button class="btn btn-success btn-sm" id="btn1)" + ID + R"(" onclick="score_add()" + ID + R"() "><i class="bi bi-plus-lg"></i></button>
@@ -1228,25 +1181,22 @@ void competition_display_page::generate_page()
               </tbody>
             </table>
           </div>
-        </div>
-      </div>
-    </div>
-
-    </section><!-- End Portfolio Details Section -->
-
-  </main><!-- End #main -->
+        </section>
+      </aside>
+    </main>
+  </div>
 
   <div class="modal fade" tabindex="-1" data-bs-backdrop="static" role="dialog" id="modalQuestionSettings">
     <div class="modal-dialog modal-dialog-centered" role="document">
       <div class="modal-content rounded-4 shadow">
-        <div class="modal-header p-5 pb-4 border-bottom-0">
-          <h1 class="mb-0 fs-4">题目设置</h1>
+        <div class="modal-header px-4 pt-4 pb-3 border-bottom">
+          <h1 class="mb-0 fs-5 fw-bold">题目设置</h1>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
 
-        <div class="modal-body p-5 pt-0">
+        <div class="modal-body p-4">
           <div class="mb-3">
-            <label class="form-label">下一题的题目类型</label>
+            <label class="form-label fw-semibold">下一题的题目类型</label>
             <p class="form-text text-danger" id="questionTypeError" style="display:none">本轮轮答还未结束，无法切换题目类型。</p>
             <div class="d-flex gap-4">
               <div class="form-check">
@@ -1264,22 +1214,14 @@ void competition_display_page::generate_page()
             </div>
           </div>
 
-          <div class="d-flex mb-3 gap-1">
-            <button type="button" class="btn btn-secondary btn-sm w-48" id="resetCurrentQuestion">重置题号</button>
-            <button type="button" class="btn btn-danger btn-sm w-48" id="discardCurrentQuestion">弃用当前展示的题目</button>
+          <div class="d-flex gap-2 pt-2">
+            <button type="button" class="btn btn-secondary btn-sm flex-fill" id="resetCurrentQuestion">重置题号</button>
+            <button type="button" class="btn btn-danger btn-sm flex-fill" id="discardCurrentQuestion">弃用当前展示的题目</button>
           </div>
         </div>
       </div>
     </div>
   </div>
-
-  <!-- ======= Footer ======= -->
-  <footer id="footer">
-	<center>
-	  <br>
-      Copyright &copy; 2023-2026 <strong><span>Science &amp; Technology Association of Chengdu No.7 High School (STA)</span></strong>. All Rights Reserved.
-	</center>
-  </footer><!-- End Footer -->
 
   <script>
     var competition_guid = ")" + c.guid + R"(";
@@ -1320,21 +1262,15 @@ void competition_display_page::generate_page()
   </script>
 
   <!-- Vendor JS Files -->
-  <script src="/assets/vendor/aos/aos.js"></script>
   <script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-  <script src="/assets/vendor/isotope-layout/isotope.pkgd.min.js"></script>
-  <script src="/assets/vendor/swiper/swiper-bundle.min.js"></script>
-  <script src="/assets/vendor/waypoints/noframework.waypoints.js"></script>
   <script src="/assets/vendor/notyf/notyf.min.js"></script>
 
-  <!-- Template Main JS File -->
-  <script src="/assets/js/main.js"></script>
-  <script src="/assets/js/competition_display.js?)" + PROGRAM_BUILD_S + R"("></script>
+  <!-- Display JS File -->
+  <script src="/assets/js/competition_display.js?)" + std::string(PROGRAM_BUILD_S) + R"("></script>
 
 </body>
 
 </html>
-
 )";
 }
 
