@@ -443,6 +443,35 @@ namespace
 		return text.substr(first, text.find_last_not_of(L" \t\r\n　") - first + 1);
 	}
 
+	void FitBankColumns(HWND list)
+	{
+		if (!list) return;
+		RECT lrc{};
+		GetClientRect(list, &lrc);
+		if (lrc.right <= 0) return;
+		int avail = std::max(S(280), (int)lrc.right);
+		int c0 = S(50), c1 = S(72), c3 = S(50), c4 = S(66);
+		int c2 = std::max(S(100), avail - c0 - c1 - c3 - c4);
+		c4 = std::max(c4, avail - c0 - c1 - c2 - c3);
+		const int widths[] = { c0, c1, c2, c3, c4 };
+		for (int i = 0; i < 5; ++i) ListView_SetColumnWidth(list, i, widths[i]);
+	}
+
+	void FitMatchColumns(HWND list)
+	{
+		if (!list) return;
+		RECT lrc{};
+		GetClientRect(list, &lrc);
+		if (lrc.right <= 0) return;
+		int avail = std::max(S(280), (int)lrc.right);
+		int c1 = S(112), c2 = S(84);
+		int c0 = std::max(S(120), avail - c1 - c2);
+		c2 = std::max(c2, avail - c0 - c1);
+		ListView_SetColumnWidth(list, 0, c0);
+		ListView_SetColumnWidth(list, 1, c1);
+		ListView_SetColumnWidth(list, 2, c2);
+	}
+
 	void RefreshBank(HWND hwnd, int selectType = -1, int selectId = 0)
 	{
 		HWND list = GetDlgItem(hwnd, BankList);
@@ -497,6 +526,7 @@ namespace
 			append(2, pl.info_problems);
 		}
 		if (redraw) {
+			FitBankColumns(list);
 			SendMessageW(list, WM_SETREDRAW, TRUE, 0);
 			RedrawWindow(list, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
 		}
@@ -1222,6 +1252,7 @@ namespace
 		std::wstring summary = count ? L"共 " + std::to_wstring(count) + L" 场比赛" : L"暂无比赛记录";
 		if (failed) summary += L"   ·   部分比赛数据无法读取";
 		SetText(GetDlgItem(hwnd, MatchHint), summary);
+		if (IsWindowVisible(list)) FitMatchColumns(list);
 	}
 
 	void LayoutControls(HWND hwnd)
@@ -1264,8 +1295,8 @@ namespace
 		place(IDC_BTN_COPY_LAN, rightEdge - 90, 181, 90, 32, service);
 
 		place(IDC_STATIC_PIN, x, 231, 84, 28, service);
-		g_box_pin = { S(x + 90), S(224), S(x + 244), S(266) };
-		place(IDC_LOGIN_PIN, x + 98, 230, 138, 29, service);
+		g_box_pin = { S(x + 90), S(224), S(rightEdge - 98), S(266) };
+		place(IDC_LOGIN_PIN, x + 100, 230, std::max(60, inner - 90 - 98 - 20), 29, service);
 		place(IDC_BTN_COPY_PIN, rightEdge - 90, 229, 90, 32, service);
 		place(IDC_HINT, x, 282, inner, 24, service);
 
@@ -1280,12 +1311,7 @@ namespace
 		place(BankAdd, rightEdge - 104, 90, 104, 34, problems);
 		g_box_bank_list = { S(x), S(180), S(x + inner), S(180 + std::max(46, h - 338)) };
 		place(BankList, x + 3, 183, std::max(60, inner - 6), std::max(40, h - 344), problems);
-		if (problems) {
-			HWND list = GetDlgItem(hwnd, BankList);
-			const int widths[] = { 48, 70, std::max(100, inner - 254), 48 };
-			for (int i = 0; i < 4; ++i) ListView_SetColumnWidth(list, i, S(widths[i]));
-			ListView_SetColumnWidth(list, 4, LVSCW_AUTOSIZE_USEHEADER);
-		}
+		if (problems) FitBankColumns(GetDlgItem(hwnd, BankList));
 		place(IDC_STATS, x, h - 150, inner, 24, problems);
 		for (int i = 0; i < 4; ++i)
 			place(IDC_BTN_CONVERT + i, x + i * (inner + 8) / 4, h - 114, (inner - 24) / 4, 34, problems);
@@ -1304,12 +1330,7 @@ namespace
 		place(MatchRefresh, rightEdge - 86, 90, 86, 34, matches);
 		g_box_match_list = { S(x), S(142), S(x + inner), S(142 + std::max(46, h - 228)) };
 		place(MatchList, x + 3, 145, std::max(60, inner - 6), std::max(40, h - 234), matches);
-		if (matches) {
-			HWND list = GetDlgItem(hwnd, MatchList);
-			ListView_SetColumnWidth(list, 0, S(std::max(120, inner - 210)));
-			ListView_SetColumnWidth(list, 1, S(106));
-			ListView_SetColumnWidth(list, 2, LVSCW_AUTOSIZE_USEHEADER);
-		}
+		if (matches) FitMatchColumns(GetDlgItem(hwnd, MatchList));
 		place(MatchHint, x, h - 65, inner, 24, matches);
 
 		// 设置卡片

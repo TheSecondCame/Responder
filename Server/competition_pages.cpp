@@ -999,8 +999,7 @@ void competition_display_page::generate_page()
           </div>
         </div>
 
-        <div aria-live="polite" aria-atomic="true" class="position-relative">
-          <div class="toast-container top-0 end-0 p-2" style="z-index:1000">
+        <div aria-live="polite" aria-atomic="true" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1080">
             <div class="toast" id="confirmAns" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="false">
               <div class="toast-header">
                 <strong class="me-auto">评价作答</strong>
@@ -1059,7 +1058,6 @@ void competition_display_page::generate_page()
                 <b>自动计分模块已经<span class="text-danger">关闭</span></b><br>可在抢答设置页重新开启。
               </div>
             </div>
-          </div>
         </div>
 
         <div id="problems" class="quiz-problem">
