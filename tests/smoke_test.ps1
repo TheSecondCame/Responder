@@ -216,8 +216,18 @@ try {
         throw "POST /main/competition/display/session failed: $($rTimerStart.Content)"
     }
 
-    $plAfterDraw = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $usedAfterDraw = ($plAfterDraw.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    function Get-UsedChoiceCount($path) {
+        $plJson = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $used = 0
+        foreach ($entry in $plJson.choice_problems) {
+            if ($entry[1] -eq 1) {
+                $used++
+            }
+        }
+        return $used
+    }
+
+    $usedAfterDraw = Get-UsedChoiceCount $problemListPath
     if ($usedAfterDraw -ne 1) {
         throw "Expected 1 used choice problem after draw, got $usedAfterDraw"
     }
@@ -227,7 +237,7 @@ try {
     if ($rDisplayRefresh.Content -notmatch 'var has_initial_session = true;') {
         throw "Refreshed GET /main/competition/display did not report has_initial_session = true"
     }
-    if ($rDisplayRefresh.Content -notmatch 'var initial_session = (\{.*?\});') {
+    if ($rDisplayRefresh.Content -notmatch 'var initial_session = (\{[^\r\n]+\});') {
         throw "Refreshed GET /main/competition/display missing initial_session JSON"
     }
     $restoredSession = $Matches[1] | ConvertFrom-Json
@@ -238,8 +248,7 @@ try {
         throw "Refreshed display page missing drawn problem content"
     }
 
-    $plAfterRefresh = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $usedAfterRefresh = ($plAfterRefresh.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    $usedAfterRefresh = Get-UsedChoiceCount $problemListPath
     if ($usedAfterRefresh -ne 1) {
         throw "Refresh consumed additional problem! used=$usedAfterRefresh"
     }
@@ -249,8 +258,7 @@ try {
     if ($rReshow.StatusCode -ne 200 -or $rReshow.Content -notmatch "data-id=`"$drawnId`"") {
         throw "Reshow failed to return drawn problem $drawnId"
     }
-    $plAfterReshow = Get-Content $problemListPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $usedAfterReshow = ($plAfterReshow.choice_problems | Where-Object { $_[1] -eq 1 }).Count
+    $usedAfterReshow = Get-UsedChoiceCount $problemListPath
     if ($usedAfterReshow -ne 1) {
         throw "Reshow consumed additional problem! used=$usedAfterReshow"
     }
