@@ -12,6 +12,7 @@
 #include "responder_problem.h"
 #include "responder_competition.h"
 #include "logging.h"
+#include "problem_upload.h"
 
 namespace fs = std::filesystem;
 
@@ -30,6 +31,47 @@ static void WriteText(const fs::path& p, const std::string& content)
     assert(out.is_open());
     out.write(content.data(), static_cast<std::streamsize>(content.size()));
     out.close();
+}
+
+static void TestProblemUpload(const fs::path& workdir)
+{
+    const fs::path source = workdir / L"只读题库.txt";
+    const fs::path destination = workdir / "upload.txt";
+    const fs::path alias = workdir / "upload-alias.txt";
+    const std::string contents(150000, 'Q');
+    WriteText(source, contents);
+    assert(SetFileAttributesW(source.c_str(), FILE_ATTRIBUTE_READONLY));
+
+    assert(StageProblemUpload(source, destination));
+    assert(ReadAllText(source) == contents);
+    assert(ReadAllText(destination) == contents);
+    assert(GetFileAttributesW(source.c_str()) & FILE_ATTRIBUTE_READONLY);
+    assert(!(GetFileAttributesW(destination.c_str()) & FILE_ATTRIBUTE_READONLY));
+    assert(fs::remove(destination));
+
+    // A second import must work after cleaning up the read-only source's copy.
+    assert(StageProblemUpload(source, destination));
+    assert(!StageProblemUpload(destination, destination));
+    fs::create_hard_link(destination, alias);
+    assert(!StageProblemUpload(alias, destination));
+    assert(ReadAllText(destination) == contents);
+    assert(ReadAllText(alias) == contents);
+    assert(!StageProblemUpload(workdir / "missing.txt", destination));
+    assert(ReadAllText(destination) == contents);
+    assert(!StageProblemUpload(source, workdir / "missing-directory" / "upload.txt"));
+
+    fs::remove(alias);
+    assert(SetFileAttributesW(source.c_str(), FILE_ATTRIBUTE_NORMAL));
+    WriteText(source, "ordinary");
+    assert(StageProblemUpload(source, destination));
+    assert(ReadAllText(destination) == "ordinary");
+    assert(SetFileAttributesW(destination.c_str(), FILE_ATTRIBUTE_READONLY));
+    assert(!StageProblemUpload(source, destination));
+    assert(ReadAllText(destination) == "ordinary");
+    assert(SetFileAttributesW(destination.c_str(), FILE_ATTRIBUTE_NORMAL));
+    WriteText(source, "");
+    assert(StageProblemUpload(source, destination));
+    assert(ReadAllText(destination).empty());
 }
 
 static void TestProblemListLifecycle(const fs::path& workdir)
@@ -384,6 +426,7 @@ int main()
     fs::create_directories(temp_dir);
     fs::current_path(temp_dir);
 
+    TestProblemUpload(temp_dir);
     TestProblemListLifecycle(temp_dir);
     TestDeleteDuplicatesPreservesUsed();
     TestCompetitionSessionLifecycle(temp_dir);
