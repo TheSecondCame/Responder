@@ -21,7 +21,7 @@
 #include <atomic>
 #include <mutex>
 #include <fstream>
-#include <filesystem>
+#include "problem_upload.h"
 #include <map>
 #include <algorithm>
 #include <cstring>
@@ -1064,10 +1064,7 @@ namespace
 		CreateDirectoryA("data", NULL);
 		CreateDirectoryA("data/upload_tmp", NULL);
 
-		std::error_code error;
-		// copy_file rejects equivalent files (including hard links) before overwriting.
-		return std::filesystem::copy_file(std::filesystem::u8path(src), UPLOAD_FILE,
-			std::filesystem::copy_options::overwrite_existing, error);
+		return StageProblemUpload(std::filesystem::path(ToWide(src)), UPLOAD_FILE);
 	}
 
 	// 在后台线程执行题库操作，完成后通过 g_op_running 通知 GUI
@@ -1132,7 +1129,8 @@ namespace
 			std::cout << "发生未知异常。" << std::endl;
 		}
 
-		if (op == IDC_BTN_CONVERT || op == IDC_BTN_MERGE) remove(UPLOAD_FILE);
+		if ((op == IDC_BTN_CONVERT || op == IDC_BTN_MERGE) && remove(UPLOAD_FILE) != 0)
+			std::cout << "警告：无法删除题库暂存文件 " << UPLOAD_FILE << std::endl;
 		std::cout << "=== 操作结束 ===" << std::endl;
 		g_op_running = false;
 	}
