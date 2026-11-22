@@ -21,6 +21,7 @@
 #include <atomic>
 #include <mutex>
 #include <fstream>
+#include <filesystem>
 #include <map>
 #include <algorithm>
 #include <cstring>
@@ -390,23 +391,24 @@ namespace
 	bool CopyTextToClipboard(HWND hwnd, const std::wstring& text)
 	{
 		if (text.empty() || text == L"—") return false;
-		if (!OpenClipboard(hwnd)) return false;
-		EmptyClipboard();
 		size_t bytes = (text.size() + 1) * sizeof(wchar_t);
 		HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-		if (hMem) {
-			void* ptr = GlobalLock(hMem);
-			if (ptr) {
-				std::memcpy(ptr, text.c_str(), bytes);
-				GlobalUnlock(hMem);
-				SetClipboardData(CF_UNICODETEXT, hMem);
-			} else {
-				GlobalFree(hMem);
-				hMem = nullptr;
-			}
+		if (!hMem) return false;
+		void* ptr = GlobalLock(hMem);
+		if (!ptr) {
+			GlobalFree(hMem);
+			return false;
 		}
-		CloseClipboard();
-		return hMem != nullptr;
+		std::memcpy(ptr, text.c_str(), bytes);
+		GlobalUnlock(hMem);
+
+		bool copied = false;
+		if (OpenClipboard(hwnd)) {
+			copied = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, hMem) != nullptr;
+			CloseClipboard();
+		}
+		if (!copied) GlobalFree(hMem);
+		return copied;
 	}
 
 	void TriggerCopyFeedback(HWND hwnd, int index, int btnId)
@@ -1049,7 +1051,7 @@ namespace
 		ofn.nMaxFile = MAX_PATH;
 		ofn.lpstrFilter = L"题库文本文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
 		ofn.nFilterIndex = 1;
-		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
 		if (!GetOpenFileNameW(&ofn))
 			return "";
@@ -1062,12 +1064,10 @@ namespace
 		CreateDirectoryA("data", NULL);
 		CreateDirectoryA("data/upload_tmp", NULL);
 
-		std::ifstream in(src, std::ios::binary);
-		if (!in) return false;
-		std::ofstream out(UPLOAD_FILE, std::ios::binary);
-		if (!out) return false;
-		out << in.rdbuf();
-		return true;
+		std::error_code error;
+		// copy_file rejects equivalent files (including hard links) before overwriting.
+		return std::filesystem::copy_file(std::filesystem::u8path(src), UPLOAD_FILE,
+			std::filesystem::copy_options::overwrite_existing, error);
 	}
 
 	// 在后台线程执行题库操作，完成后通过 g_op_running 通知 GUI
@@ -1132,7 +1132,7 @@ namespace
 			std::cout << "发生未知异常。" << std::endl;
 		}
 
-		remove(UPLOAD_FILE);
+		if (op == IDC_BTN_CONVERT || op == IDC_BTN_MERGE) remove(UPLOAD_FILE);
 		std::cout << "=== 操作结束 ===" << std::endl;
 		g_op_running = false;
 	}
@@ -2288,7 +2288,7 @@ namespace
 				if (file.empty()) return 0;
 				if (!StageUploadFile(file))
 				{
-					MessageBoxW(hwnd, L"无法读取所选的题库文件。", L"错误", MB_ICONERROR);
+					MessageBoxW(hwnd, L"无法复制题库文件。请选择可读取的源文件，并避开程序的 upload.txt 暂存文件。", L"错误", MB_ICONERROR);
 					return 0;
 				}
 				g_op_running = true;
