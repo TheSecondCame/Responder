@@ -550,9 +550,11 @@ static void TestConcurrentRequestContextRouting()
     echo_post.set_handler(svr);
 
     int port = svr.bind_to_any_port("127.0.0.1");
+    std::cout << "[ConcurrentTest] bound port=" << port << std::endl;
     assert(port > 0);
     std::thread server_thread([&]() { svr.listen_after_bind(); });
     svr.wait_until_ready();
+    std::cout << "[ConcurrentTest] server ready" << std::endl;
 
     // Suppress verbose per-request std::cout noise during concurrent stress test
     std::ostringstream sink;
@@ -637,13 +639,15 @@ static void TestConcurrentRequestContextRouting()
     for (auto& t : clients) t.join();
 
     std::cout.rdbuf(orig_cout);
+    std::cout << "[ConcurrentTest] clients joined, failures=" << failures.load() << std::endl;
     svr.stop();
     server_thread.join();
+    std::cout << "[ConcurrentTest] server stopped" << std::endl;
 
     if (failures.load() > 0)
     {
         for (const auto& msg : err_samples)
-            std::cerr << "[TestConcurrentRequestContextRouting] " << msg << std::endl;
+            std::cout << "[TestConcurrentRequestContextRouting] " << msg << std::endl;
     }
     assert(failures.load() == 0);
 }
