@@ -74,17 +74,22 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path ".\build_tests" -Force | Out-Null
+          cl /nologo /c /EHsc /std:c++20 /utf-8 /W4 /WX /IServer .\Server\encoding.cpp /Fo.\build_tests\encoding_w4.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cl /nologo /EHsc /std:c++20 /utf-8 /W3 `
             /DWIN32_LEAN_AND_MEAN /DNOMINMAX /D_WINSOCK_DEPRECATED_NO_WARNINGS `
             /IServer `
             .\tests\regression_tests.cpp `
+            .\Server\encoding.cpp `
+            .\Server\responder_request.cpp `
+            .\Server\responder_template.cpp `
             .\Server\responder_problem.cpp `
             .\Server\responder_competition.cpp `
             .\Server\functions.cpp `
             .\Server\logging.cpp `
             /Fo.\build_tests\ `
             /Fe.\build_tests\regression_tests.exe `
-            /link user32.lib ole32.lib
+            /link user32.lib ole32.lib ws2_32.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\build_tests\regression_tests.exe
 

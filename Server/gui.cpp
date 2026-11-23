@@ -1159,13 +1159,19 @@ namespace
 			if (GetText(g_url_lan) != lanUrl) SetText(g_url_lan, lanUrl);
 			SetText(g_hint, L"前端电脑可通过局域网地址和登录 PIN 进入比赛。");
 
+			std::string currentPin;
+			{
+				std::lock_guard<std::mutex> pin_lock(authentic_pin_mutex);
+				currentPin = authentic_pin;
+			}
+
 			EnableWindow(g_btn_copy_local, TRUE);
 			EnableWindow(g_btn_copy_lan, !ip.empty());
-			EnableWindow(g_btn_copy_pin, !authentic_pin.empty());
+			EnableWindow(g_btn_copy_pin, !currentPin.empty());
 
-			if (g_last_shown_pin != authentic_pin)
+			if (g_last_shown_pin != currentPin)
 			{
-				g_last_shown_pin = authentic_pin;
+				g_last_shown_pin = currentPin;
 				SetText(g_pin, ToWide(g_last_shown_pin));
 			}
 		}

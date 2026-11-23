@@ -427,9 +427,88 @@ try {
         throw "Delayed sync after finish was not rejected or recreated session.json: $($rDelayedSyncFinish.Content)"
     }
 
+    # 100 concurrent requests across two competitions on the same routes must not cross-contaminate
+    $comp2Body = "name=CIConcurrentMatch2&description=Smoke2&choiceCount=3&completionCount=1&infoCount=1&teamName1=Red&teamName2=Blue"
+    $rNewComp2 = Invoke-WebRequest -Uri "$baseUrl/main/competition/new" -Method Post -Headers $headers -Body $comp2Body -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rNewComp2.Content -notmatch 'guid=([A-Fa-f0-9\-]+)') {
+        throw "Failed to extract second competition GUID from POST /main/competition/new"
+    }
+    $compGuid2 = $Matches[1]
+
+    # Put compGuid back to ONGOING (via display) and compGuid2 to ONGOING
+    $null = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
+    $null = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid2" -Headers $headers -UseBasicParsing
+
+    $stressHandler = New-Object System.Net.Http.HttpClientHandler
+    $stressHandler.UseCookies = $false
+    $stressHandler.MaxConnectionsPerServer = 5
+    $stressClient = New-Object System.Net.Http.HttpClient($stressHandler)
+    try {
+        $stressClient.DefaultRequestHeaders.Add("Cookie", "token=$token")
+
+        # 100 concurrent GET /main/competition/detail requests alternating between compGuid and compGuid2
+        $getTasks = New-Object System.Collections.Generic.List[System.Threading.Tasks.Task[System.Net.Http.HttpResponseMessage]]
+        $getExpect = New-Object System.Collections.Generic.List[string]
+        for ($i = 0; $i -lt 100; $i++) {
+            $isFirst = ($i % 2 -eq 0)
+            $g = if ($isFirst) { $compGuid } else { $compGuid2 }
+            $getExpect.Add($(if ($isFirst) { "CISessionMatch" } else { "CIConcurrentMatch2" }))
+            $getTasks.Add($stressClient.GetAsync("$baseUrl/main/competition/detail?guid=$g"))
+        }
+        [System.Threading.Tasks.Task]::WaitAll($getTasks.ToArray())
+        for ($i = 0; $i -lt 100; $i++) {
+            $resp = $getTasks[$i].Result
+            if (-not $resp.IsSuccessStatusCode) {
+                throw "Concurrent GET detail #$i failed with $($resp.StatusCode)"
+            }
+            $html = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $expectedName = $getExpect[$i]
+            $otherName = if ($expectedName -eq "CISessionMatch") { "CIConcurrentMatch2" } else { "CISessionMatch" }
+            if ($html -notmatch [regex]::Escape($expectedName) -or $html -match [regex]::Escape($otherName)) {
+                throw "Concurrent GET detail #$i returned wrong competition content (expected $expectedName)"
+            }
+        }
+
+        # 100 concurrent POST /main/competition/display/scores requests across compGuid and compGuid2
+        $scoreTasks = New-Object System.Collections.Generic.List[System.Threading.Tasks.Task[System.Net.Http.HttpResponseMessage]]
+        for ($i = 0; $i -lt 100; $i++) {
+            $slot = $i % 4
+            switch ($slot) {
+                0 { $g = $compGuid;  $t = 0; $sc = 101 }
+                1 { $g = $compGuid;  $t = 1; $sc = 102 }
+                2 { $g = $compGuid2; $t = 0; $sc = 201 }
+                3 { $g = $compGuid2; $t = 1; $sc = 202 }
+            }
+            $body = New-Object System.Net.Http.StringContent("guid=$g&team=$t&score=$sc", [System.Text.Encoding]::UTF8, "application/x-www-form-urlencoded")
+            $scoreTasks.Add($stressClient.PostAsync("$baseUrl/main/competition/display/scores", $body))
+        }
+        [System.Threading.Tasks.Task]::WaitAll($scoreTasks.ToArray())
+        for ($i = 0; $i -lt 100; $i++) {
+            $resp = $scoreTasks[$i].Result
+            $txt = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult().Trim()
+            if (-not $resp.IsSuccessStatusCode -or $txt -ne "success") {
+                throw "Concurrent POST scores #$i failed: $($resp.StatusCode) $txt"
+            }
+        }
+    } finally {
+        $stressClient.Dispose()
+    }
+
+    $scores1 = (Get-Content (Join-Path $staging "data\competitions\$compGuid\scores.json") -Encoding UTF8) -join ","
+    $scores2 = (Get-Content (Join-Path $staging "data\competitions\$compGuid2\scores.json") -Encoding UTF8) -join ","
+    if ($scores1 -ne "101,102") {
+        throw "compGuid scores corrupted under concurrent load: $scores1"
+    }
+    if ($scores2 -ne "201,202") {
+        throw "compGuid2 scores corrupted under concurrent load: $scores2"
+    }
+
     $finalLog = Get-Content $logPath -Raw -Encoding UTF8
     if ($finalLog -notmatch "Successful login\. New PIN code:") {
         throw "Expected rotated PIN log entry in server.log"
+    }
+    if ($finalLog -notmatch "Web problem operation: action=convert, status=ok") {
+        throw "Expected web problem operation audit log in server.log"
     }
 
     Write-Host "HTTP smoke test passed on $baseUrl"

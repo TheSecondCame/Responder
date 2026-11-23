@@ -6,6 +6,7 @@
 #include "responder_pages.h"
 #include "responder_problem.h"
 #include "responder_competition.h"
+#include "server_core.h"
 
 extern problem_list pl;
 extern std::string authentic_pin;
@@ -19,9 +20,9 @@ void welcome_page::init()
 
 	is_request_login = false;
 }
-void welcome_page::generate_page() // '/'
+void welcome_page::generate_page(const request_context&, page_context& page) // '/'
 {
-    content = R"(
+    page.content = R"(
   <section class="console-welcome">
     <div class="container">
       <div class="console-welcome-hero">
@@ -71,9 +72,9 @@ void start_page::init()
 
     is_request_login = false;
 }
-void start_page::generate_page()
+void start_page::generate_page(const request_context&, page_context& page)
 {
-    content = R"(
+    page.content = R"(
   <section class="console-welcome">
     <div class="container">
       <div class="console-login-wrap">
@@ -133,17 +134,28 @@ void login_handler::init()
 
     is_request_login = false;
 }
-std::string login_handler::generate_response()
+std::string login_handler::generate_response(const request_context& ctx)
 {
 	// TODO: 增加次数检测，防止暴力破解
 
-    if (params.find("pin") != params.end())
-        if (params["pin"] == authentic_pin)
+    if (ctx.has_param("pin"))
+    {
+        const std::string submitted_pin = ctx.get_param("pin");
+        std::string new_pin;
+        bool matched = false;
         {
-			authentic_pin = generate_random_token(6, "0123456789"); // 生成新的PIN码，旧的PIN码失效
-
+            std::lock_guard<std::mutex> pin_lock(authentic_pin_mutex);
+            if (submitted_pin == authentic_pin)
+            {
+                authentic_pin = generate_random_token(6, "0123456789"); // 生成新的PIN码，旧的PIN码失效
+                new_pin = authentic_pin;
+                matched = true;
+            }
+        }
+        if (matched)
+        {
             std::cout << "=================================================" << std::endl;
-            std::cout << "Successful login. New PIN code: " << authentic_pin << std::endl;
+            std::cout << "Successful login. New PIN code: " << new_pin << std::endl;
             std::cout << "=================================================" << std::endl;
 
 		    return R"(
@@ -153,6 +165,7 @@ std::string login_handler::generate_response()
 </script>
     )";
         }
+    }
 
     return R"(
 <script> window.location.href = "/start"; </script>
@@ -168,7 +181,7 @@ void main_page::init()
 
 	is_request_login = true;
 }
-void main_page::generate_page()
+void main_page::generate_page(const request_context&, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
     int completion_total = pl.completion_problems.size();
@@ -179,7 +192,7 @@ void main_page::generate_page()
 	int choice_unused = problem_list::count_unused(pl.choice_problems);
 	int info_unused = problem_list::count_unused(pl.info_problems);
 
-    content = (std::string)R"(
+    page.content = (std::string)R"(
 <div class="row g-4 align-items-stretch">
 
   <div class="col-lg-4 d-flex">
@@ -288,7 +301,7 @@ void main_page::generate_page()
             break;
         }
 
-        content += R"(
+        page.content += R"(
       <tr>
         <td class="fw-semibold">)" + c.name + R"(</td>
         <td>)" + status + R"(</td>
@@ -296,15 +309,15 @@ void main_page::generate_page()
       </tr>)";
     }
 
-    content += R"(
+    page.content += R"(
       </tbody>
       </table>
 )";
 
     if (comlist.size() == 0)
-		content += R"(<div class="text-center text-secondary py-4" style="font-size:14px;">暂无比赛，点击右上角「新建比赛」开始。</div>)";
+		page.content += R"(<div class="text-center text-secondary py-4" style="font-size:14px;">暂无比赛，点击右上角「新建比赛」开始。</div>)";
 
-    content += R"(
+    page.content += R"(
       </div> 
     </div> 
   </div>
@@ -319,9 +332,9 @@ void logout_page::init()
     is_full_custom = true;
     is_request_login = true;
 }
-void logout_page::generate_page()
+void logout_page::generate_page(const request_context&, page_context& page)
 {
-	content = R"(
+	page.content = R"(
 <script>
     document.cookie="token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
     window.location.href = "/";

@@ -1,55 +1,15 @@
-// encoding.h : Responder 编解码代码模板的定义。
+// encoding.h : Responder URI 编解码工具的定义。
 
 // 版权声明：
 // Copyright (C) 2023-2026 Science & Technology Association of Chengdu No.7 High School (STA). All Rights Reserved.
 
-#define _CRT_SECURE_NO_DEPRECATE
-
-#ifndef RES_ENCODING
-#define RES_ENCODING
+#ifndef RES_ENCODING_H
+#define RES_ENCODING_H
 
 #include <string>
-#include <locale.h>
-#include <Windows.h>
-#include <codecvt>
-#include <wtypes.h>
-#include <comutil.h>
-#include <stdio.h>
 
-// Hex / Base16
-inline char ToHexUpper(unsigned int value);
-inline char ToHexLower(unsigned int value);
-inline int FromHex(unsigned int c);
+// 无状态、无固定尺寸缓冲的 URI 编解码工具（支持任意长度 UTF-8 字符串）
+std::string encode_uri(const std::string& s);
+std::string decode_uri(const std::string& s, bool plus_as_space = false);
 
-std::string HexEncode(const std::string& d);
-std::string HexDecode(const std::string& hex);
-
-// URI
-const char* encodeURI(const char* Str);
-std::string decodeURI(std::string s);
-
-// GUID
-std::string GuidToString(const GUID& guid);
-
-// string
-std::string Num2String(int n);
-int         String2Num(std::string n);
-std::string WStr2Str(const std::wstring& wstr);
-std::string PWSTR2string(PWSTR pwstr);
-std::wstring S2WS(const std::string& s);
-
-// UTF-8
-std::string UTF8ToANSI(std::string s);
-std::string UrlUTF8(char* str);
-void GB2312ToUTF_8(std::string& pOut, char* pText, int pLen);
-char* UTF_8ToGb2312(const char* utf8);
-void Gb2312ToUnicode(WCHAR* pOut, char* gbBuffer);
-void UTF_8ToUnicode(std::wstring& pOut, const std::string& pText);
-void UnicodeToUTF_8(char* pOut, WCHAR* pText);
-std::wstring ANSI2Unicode(const std::string& str);
-
-// CRC32
-void Init_CRC32_Tab();
-unsigned int Calc_File_CRC32(const char* pFileName);
-
-#endif // !RES_ENCODING
+#endif // RES_ENCODING_H

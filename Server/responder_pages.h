@@ -12,112 +12,112 @@ class welcome_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class start_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class login_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class main_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class logout_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class new_competition_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class new_competition_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_edit_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class competition_edit_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_delete_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_detail_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class competition_display_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class competition_display_scores_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_display_problem_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_display_session_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 class competition_enddisplay_handler : public responder_post_request
 {
 protected:
 	void init() override;
-	std::string generate_response() override;
+	std::string generate_response(const request_context& ctx) override;
 };
 
 // ===== 题库管理（原 Problems Generator 的 Web 化）=====
@@ -127,7 +127,7 @@ class problem_manage_page : public responder_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 class problem_manage_handler : public responder_post_page
@@ -135,13 +135,7 @@ class problem_manage_handler : public responder_post_page
 {
 protected:
 	void init() override;
-	void generate_page() override;
-
-	std::string alert_class;           // 结果提示框的样式类（alert-success / alert-danger）
-	std::string alert_icon;            // 结果提示框的图标类
-	std::string result_title;          // 结果标题
-	std::string result_summary;        // 结果摘要
-	std::string exec_log;              // 题库操作的执行日志
+	void generate_page(const request_context& ctx, page_context& page) override;
 };
 
 #endif // RESPONDER_MAIN_PAGES_H
