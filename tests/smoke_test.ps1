@@ -441,6 +441,7 @@ try {
 
     $stressHandler = New-Object System.Net.Http.HttpClientHandler
     $stressHandler.UseCookies = $false
+    $stressHandler.MaxConnectionsPerServer = 5
     $stressClient = New-Object System.Net.Http.HttpClient($stressHandler)
     try {
         $stressClient.DefaultRequestHeaders.Add("Cookie", "token=$token")

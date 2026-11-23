@@ -554,21 +554,43 @@ static void TestConcurrentRequestContextRouting()
     std::thread server_thread([&]() { svr.listen_after_bind(); });
     svr.wait_until_ready();
 
-    // Suppress verbose per-request std::cout noise during 200-request stress test
+    // Suppress verbose per-request std::cout noise during concurrent stress test
     std::ostringstream sink;
     std::streambuf* orig_cout = std::cout.rdbuf(sink.rdbuf());
 
-    const int kWorkers = 20;
-    const int kPerWorker = 5; // 100 GET + 100 POST concurrent requests on the same static handler instances
+    // Match httplib's worker pool (8) with keep-alive connections so all workers stay busy
+    // concurrently without overflowing Winsock's default listen(backlog=5) on initial connect.
+    const int kWorkers = 8;
+    const int kPerWorker = 15; // 120 GET + 120 POST concurrent requests
     std::atomic<int> failures{ 0 };
+    std::atomic<int> ready_count{ 0 };
+    std::atomic<bool> go{ false };
+    std::mutex err_mutex;
+    std::vector<std::string> err_samples;
     std::vector<std::thread> clients;
     for (int w = 0; w < kWorkers; ++w)
     {
         clients.emplace_back([&, w]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(w * 5));
             httplib::Client cli("127.0.0.1", port);
+            cli.set_keep_alive(true);
             cli.set_connection_timeout(5, 0);
             cli.set_read_timeout(5, 0);
             httplib::Headers hdrs = { { "Cookie", "token=" + authentic_token } };
+
+            // Establish connection before barrier so all 8 workers hit handlers concurrently
+            auto warmup = cli.Get("/test/page?guid=warmup&team=0", hdrs);
+            if (!warmup || warmup->status != 200)
+            {
+                ++failures;
+                std::lock_guard<std::mutex> lk(err_mutex);
+                if (err_samples.size() < 5)
+                    err_samples.push_back("warmup GET failed: err=" + std::to_string(static_cast<int>(warmup.error())));
+            }
+
+            ready_count.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
 
             for (int k = 0; k < kPerWorker; ++k)
             {
@@ -581,12 +603,18 @@ static void TestConcurrentRequestContextRouting()
                 if (!r1 || r1->status != 200)
                 {
                     ++failures;
+                    std::lock_guard<std::mutex> lk(err_mutex);
+                    if (err_samples.size() < 5)
+                        err_samples.push_back("GET failed id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r1.error())));
                     continue;
                 }
                 if (r1->body.find("<title>BT_" + guid + "</title>") == std::string::npos ||
                     r1->body.find("PAGE_PAYLOAD:" + guid + ":" + team) == std::string::npos)
                 {
                     ++failures;
+                    std::lock_guard<std::mutex> lk(err_mutex);
+                    if (err_samples.size() < 5)
+                        err_samples.push_back("GET mismatch id=" + std::to_string(id));
                 }
 
                 auto r2 = cli.Post("/test/post", hdrs,
@@ -596,16 +624,27 @@ static void TestConcurrentRequestContextRouting()
                     r2->body != ("POST_PAYLOAD:" + guid + ":" + team + ":" + score))
                 {
                     ++failures;
+                    std::lock_guard<std::mutex> lk(err_mutex);
+                    if (err_samples.size() < 5)
+                        err_samples.push_back("POST failed/mismatch id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r2.error())));
                 }
             }
         });
     }
+    while (ready_count.load(std::memory_order_acquire) < kWorkers)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    go.store(true, std::memory_order_release);
     for (auto& t : clients) t.join();
 
     std::cout.rdbuf(orig_cout);
     svr.stop();
     server_thread.join();
 
+    if (failures.load() > 0)
+    {
+        for (const auto& msg : err_samples)
+            std::cerr << "[TestConcurrentRequestContextRouting] " << msg << std::endl;
+    }
     assert(failures.load() == 0);
 }
 
