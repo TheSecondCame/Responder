@@ -76,12 +76,12 @@ namespace
 	}
 
 	// 重新载入题库（操作完成后刷新内存中的存量，避免必须重启服务端）
-	void reload_problem_list()
+	void reload_problem_list(std::ostream& log)
 	{
 		pl.choice_problems.clear();
 		pl.completion_problems.clear();
 		pl.info_problems.clear();
-		pl.load(PROBLEM_LIST_FILE);
+		pl.load(PROBLEM_LIST_FILE, log);
 		pl_unused = pl;
 		pl_unused.remove_used();
 	}
@@ -109,10 +109,10 @@ void problem_manage_page::init()
 	is_index_page = true;
 }
 
-void problem_manage_page::generate_page()
+void problem_manage_page::generate_page(const request_context&, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
-	content = R"(
+	page.content = R"(
     <div class="row g-4 align-items-stretch">
 
       <div class="col-lg-5 d-flex">
@@ -229,21 +229,21 @@ void problem_manage_handler::init()
 	is_index_page = true;
 }
 
-void problem_manage_handler::generate_page()
+void problem_manage_handler::generate_page(const request_context& ctx, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
 	std::string action;
 	std::string uploaded_filename;
 
 	// action 可能来自 multipart 表单字段，也可能来自普通表单体（params 已解析两者）
-	if (req_form.has_field("action"))
-		action = req_form.get_field("action");
-	else if (params.find("action") != params.end())
-		action = params["action"];
+	if (ctx.req_form.has_field("action"))
+		action = ctx.req_form.get_field("action");
+	else if (ctx.has_param("action"))
+		action = ctx.get_param("action");
 
-	if (req_form.has_file("file"))
+	if (ctx.req_form.has_file("file"))
 	{
-		auto file = req_form.get_file("file");
+		auto file = ctx.req_form.get_file("file");
 		if (!file.filename.empty())
 		{
 			// 只取文件名，忽略客户端可能带上的路径
@@ -258,10 +258,10 @@ void problem_manage_handler::generate_page()
 		}
 	}
 
-	// 捕获题库操作过程中 std::cout 的输出，作为执行日志返回页面
+	// 显式使用局部日志流收集当次执行日志，避免劫持全局 std::cout
 	std::ostringstream log;
-	std::streambuf* old_buf = std::cout.rdbuf(log.rdbuf());
-
+	std::string result_title;
+	std::string result_summary;
 	bool ok = true;
 
 	try
@@ -276,20 +276,20 @@ void problem_manage_handler::generate_page()
 			}
 			else
 			{
-				std::cout << "=== 操作："
+				log << "=== 操作："
 					<< (action == "convert" ? "转换题库（覆盖现有题库）" : "合并题库（保留现有题目）")
 					<< " ===" << std::endl;
-				std::cout << "上传文件：" << uploaded_filename << std::endl;
+				log << "上传文件：" << uploaded_filename << std::endl;
 
 				backup_problems();
-				std::cout << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
+				log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 
 				if (action == "convert")
-					problem_list::convert(UPLOAD_FILE, PROBLEM_DIR);
+					problem_list::convert(UPLOAD_FILE, PROBLEM_DIR, log);
 				else
-					problem_list::merge(UPLOAD_FILE, PROBLEM_DIR);
+					problem_list::merge(UPLOAD_FILE, PROBLEM_DIR, log);
 
-				reload_problem_list();
+				reload_problem_list(log);
 				result_title = "执行成功";
 				result_summary = (action == "convert")
 					? "题库已按上传文件完整替换。"
@@ -298,13 +298,13 @@ void problem_manage_handler::generate_page()
 		}
 		else if (action == "dedup")
 		{
-			std::cout << "=== 操作：去除重复题并重排 ID ===" << std::endl;
+			log << "=== 操作：去除重复题并重排 ID ===" << std::endl;
 
 			backup_problems();
-			std::cout << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
+			log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 
 			responder_problem_output_handler handler;
-			handler.load(PROBLEM_LIST_FILE);
+			handler.load(PROBLEM_LIST_FILE, log);
 
 			int before = (int)(handler.choice_problems.size() + handler.completion_problems.size() + handler.info_problems.size());
 			handler.delete_duplicates();
@@ -314,16 +314,16 @@ void problem_manage_handler::generate_page()
 			CreateDirectoryA(PROBLEM_DIR, NULL);
 			handler.output_to_folder(PROBLEM_DIR);
 
-			reload_problem_list();
+			reload_problem_list(log);
 			result_title = "执行成功";
 			result_summary = "共删除 " + std::to_string(before - after) + " 道重复题目（操作前 "
 				+ std::to_string(before) + " 道，操作后 " + std::to_string(after) + " 道）。";
 		}
 		else if (action == "backup")
 		{
-			std::cout << "=== 操作：备份当前题库 ===" << std::endl;
+			log << "=== 操作：备份当前题库 ===" << std::endl;
 			backup_problems();
-			std::cout << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
+			log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 			result_title = "备份完成";
 			result_summary = std::string("当前题库已备份到 ") + BACKUP_DIR + "。";
 		}
@@ -339,7 +339,7 @@ void problem_manage_handler::generate_page()
 		ok = false;
 		result_title = "执行出错";
 		result_summary = std::string("发生异常：") + e.what();
-		std::cout << "发生异常：" << e.what() << std::endl;
+		log << "发生异常：" << e.what() << std::endl;
 	}
 	catch (...)
 	{
@@ -348,16 +348,18 @@ void problem_manage_handler::generate_page()
 		result_summary = "发生未知异常。";
 	}
 
-	std::cout.rdbuf(old_buf);
+	std::cout << "Web problem operation: action=" << action
+		<< ", status=" << (ok ? "ok" : "fail")
+		<< ", summary=" << result_summary << std::endl;
 
 	// 清理上传的临时文件
 	remove(UPLOAD_FILE);
 
-	alert_class = ok ? "alert-success" : "alert-danger";
-	alert_icon = ok ? "bi-check-circle" : "bi-x-circle";
-	exec_log = log.str();
+	const std::string alert_class = ok ? "alert-success" : "alert-danger";
+	const std::string alert_icon = ok ? "bi-check-circle" : "bi-x-circle";
+	const std::string exec_log = log.str();
 
-	content = R"(
+	page.content = R"(
     <div class="alert )" + alert_class + R"( d-flex align-items-center mb-4" role="alert">
       <i class="bi )" + alert_icon + R"( me-2"></i>
       <div><strong>)" + result_title + R"(</strong> —— )" + result_summary + R"(</div>

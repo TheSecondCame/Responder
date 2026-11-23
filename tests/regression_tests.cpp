@@ -1,3 +1,4 @@
+#include <winsock2.h>
 #include <Windows.h>
 #include <atomic>
 #include <cassert>
@@ -9,10 +10,14 @@
 #include <thread>
 #include <vector>
 
+#include "encoding.h"
+#include "responder_request.h"
 #include "responder_problem.h"
 #include "responder_competition.h"
 #include "logging.h"
 #include "problem_upload.h"
+
+std::string authentic_token = "CONCURRENCY_TEST_TOKEN_50_CHARS_0123456789ABCDEFGH";
 
 namespace fs = std::filesystem;
 
@@ -417,6 +422,193 @@ static void TestLogging()
     std::cerr.rdbuf(orig_cerr);
 }
 
+static void TestEncodingAndFormParsing()
+{
+    const std::string utf8 = "成都七中 STA 竞赛题库 + 100% & a=b";
+    const std::string encoded = encode_uri(utf8);
+    assert(decode_uri(encoded, false) == utf8);
+
+    // Payload exceeding the legacy 512000-byte fixed stack/static buffers
+    std::string big(700000, 'A');
+    big += "%E6%B5%8B%E8%AF%95%2B+space";
+    std::string decoded = decode_uri(big, true);
+    const std::string suffix = "测试+ space";
+    assert(decoded.size() == 700000 + suffix.size());
+    assert(decoded.substr(700000) == suffix);
+
+    // Malformed percent-escapes stay literal
+    assert(decode_uri("%ZZ%2%G0%", false) == "%ZZ%2%G0%");
+
+    // build_request_context parses >512KB form fields, preserves %2B as '+', and overrides query params
+    httplib::Request req;
+    req.params.emplace("name", "from_query");
+    req.params.emplace("only_query", "qval");
+    req.headers.emplace("Content-Type", "Application/X-WWW-Form-Urlencoded; charset=UTF-8");
+    const std::string huge_val(600000, 'x');
+    req.body = "name=a%2Bb+c&huge=" + huge_val;
+
+    request_context ctx = build_request_context(req, true);
+    assert(ctx.get_param("name") == "a+b c");
+    assert(ctx.get_param("only_query") == "qval");
+    assert(ctx.get_param("huge") == huge_val);
+
+    // Multi-threaded concurrent encode_uri/decode_uri
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 16; ++t) {
+        threads.emplace_back([t]() {
+            for (int i = 0; i < 200; ++i) {
+                std::string src = "thread_" + std::to_string(t) + "_题_" + std::to_string(i);
+                assert(decode_uri(encode_uri(src)) == src);
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+}
+
+static void TestProblemStreamLoggingNoCoutHijack(const fs::path& workdir)
+{
+    fs::create_directories(workdir / "data" / "problems");
+    const fs::path txt = workdir / "stream_log_batch.txt";
+    WriteText(txt,
+        "1 1\n"
+        "Stream log test question\n"
+        "42\n");
+
+    std::ostringstream cout_canary;
+    std::streambuf* orig_cout = std::cout.rdbuf(cout_canary.rdbuf());
+
+    std::ostringstream op_log;
+    problem_list::convert(txt.string(), "data/problems/", op_log);
+    assert(std::cout.rdbuf() == cout_canary.rdbuf());
+    assert(cout_canary.str().empty());
+    assert(op_log.str().find("Converting problems from") != std::string::npos);
+    assert(op_log.str().find("Successfully converted problems") != std::string::npos);
+
+    const fs::path txt_merge = workdir / "stream_log_merge.txt";
+    WriteText(txt_merge,
+        "2 1\n"
+        "Stream log merge question\n"
+        "99\n");
+
+    std::ostringstream merge_log;
+    problem_list::merge(txt_merge.string(), "data/problems/", merge_log);
+    assert(std::cout.rdbuf() == cout_canary.rdbuf());
+    assert(cout_canary.str().empty());
+    assert(merge_log.str().find("Merging problems from") != std::string::npos);
+    assert(merge_log.str().find("Successfully merged problems") != std::string::npos);
+
+    std::cout.rdbuf(orig_cout);
+}
+
+static void TestConcurrentRequestContextRouting()
+{
+    class TestEchoPage : public responder_page
+    {
+    protected:
+        void init() override
+        {
+            address = "/test/page";
+            browser_title = "default";
+            page_title = "default";
+            is_request_login = true;
+            is_index_page = true;
+        }
+        void generate_page(const request_context& ctx, page_context& page) override
+        {
+            const std::string guid = ctx.get_param("guid");
+            const std::string team = ctx.get_param("team");
+            std::this_thread::yield();
+            page.browser_title = "BT_" + guid;
+            page.page_title = "PT_" + guid;
+            page.content = "PAGE_PAYLOAD:" + guid + ":" + team;
+        }
+    };
+
+    class TestEchoPost : public responder_post_request
+    {
+    protected:
+        void init() override
+        {
+            address = "/test/post";
+            is_request_login = true;
+        }
+        std::string generate_response(const request_context& ctx) override
+        {
+            const std::string guid = ctx.get_param("guid");
+            const std::string team = ctx.get_param("team");
+            const std::string score = ctx.get_param("score");
+            std::this_thread::yield();
+            return "POST_PAYLOAD:" + guid + ":" + team + ":" + score;
+        }
+    };
+
+    TestEchoPage echo_page;
+    TestEchoPost echo_post;
+
+    httplib::Server svr;
+    echo_page.set_handler(svr);
+    echo_post.set_handler(svr);
+
+    int port = svr.bind_to_any_port("127.0.0.1");
+    assert(port > 0);
+    std::thread server_thread([&]() { svr.listen_after_bind(); });
+    svr.wait_until_ready();
+
+    // Suppress verbose per-request std::cout noise during 200-request stress test
+    std::ostringstream sink;
+    std::streambuf* orig_cout = std::cout.rdbuf(sink.rdbuf());
+
+    const int kWorkers = 20;
+    const int kPerWorker = 5; // 100 GET + 100 POST concurrent requests on the same static handler instances
+    std::atomic<int> failures{ 0 };
+    std::vector<std::thread> clients;
+    for (int w = 0; w < kWorkers; ++w)
+    {
+        clients.emplace_back([&, w]() {
+            httplib::Client cli("127.0.0.1", port);
+            cli.set_connection_timeout(5, 0);
+            cli.set_read_timeout(5, 0);
+            httplib::Headers hdrs = { { "Cookie", "token=" + authentic_token } };
+
+            for (int k = 0; k < kPerWorker; ++k)
+            {
+                const int id = w * kPerWorker + k;
+                const std::string guid = "guid-" + std::to_string(id);
+                const std::string team = "team-" + std::to_string(id % 4);
+                const std::string score = std::to_string(1000 + id);
+
+                auto r1 = cli.Get(("/test/page?guid=" + guid + "&team=" + team).c_str(), hdrs);
+                if (!r1 || r1->status != 200)
+                {
+                    ++failures;
+                    continue;
+                }
+                if (r1->body.find("<title>BT_" + guid + "</title>") == std::string::npos ||
+                    r1->body.find("PAGE_PAYLOAD:" + guid + ":" + team) == std::string::npos)
+                {
+                    ++failures;
+                }
+
+                auto r2 = cli.Post("/test/post", hdrs,
+                    "guid=" + guid + "&team=" + team + "&score=" + score,
+                    "application/x-www-form-urlencoded");
+                if (!r2 || r2->status != 200 ||
+                    r2->body != ("POST_PAYLOAD:" + guid + ":" + team + ":" + score))
+                {
+                    ++failures;
+                }
+            }
+        });
+    }
+    for (auto& t : clients) t.join();
+
+    std::cout.rdbuf(orig_cout);
+    svr.stop();
+    server_thread.join();
+
+    assert(failures.load() == 0);
+}
+
 int main()
 {
     SetConsoleOutputCP(CP_UTF8);
@@ -433,6 +625,9 @@ int main()
     TestSessionWriteFailurePreservesPreviousAndRetries(temp_dir);
     TestPauseFinishSyncRace(temp_dir);
     TestLogging();
+    TestEncodingAndFormParsing();
+    TestProblemStreamLoggingNoCoutHijack(temp_dir);
+    TestConcurrentRequestContextRouting();
 
     fs::current_path(orig_cwd);
     std::error_code ec;

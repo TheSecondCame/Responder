@@ -130,10 +130,10 @@ void new_competition_page::init()
 
 	is_request_login = true;
 }
-void new_competition_page::generate_page()
+void new_competition_page::generate_page(const request_context&, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
-    content = R"(
+    page.content = R"(
 <form id="newComForm" method="post" role="form" style="margin-bottom:25px" novalidate>
 <div class="row g-4 align-items-stretch">
   <div class="col-lg-4 d-flex">
@@ -308,24 +308,24 @@ void new_competition_handler::init()
 
     is_request_login = true;
 }
-std::string new_competition_handler::generate_response()
+std::string new_competition_handler::generate_response(const request_context& ctx)
 {
     int teamCount = 0;
-    for (auto& param : params)
+    for (const auto& param : ctx.params)
         if (param.first.substr(0, 8) == "teamName")
             teamCount++;
 
     competition c;
 	c.guid = competition::generate_guid();
-    c.name = params["name"];
-	c.description = params["description"];
-	c.choice_count = std::stoi(params["choiceCount"]);
-	c.completion_count = std::stoi(params["completionCount"]);
-	c.info_count = std::stoi(params["infoCount"]);
+    c.name = ctx.get_param("name");
+	c.description = ctx.get_param("description");
+	c.choice_count = std::stoi(ctx.get_param("choiceCount"));
+	c.completion_count = std::stoi(ctx.get_param("completionCount"));
+	c.info_count = std::stoi(ctx.get_param("infoCount"));
 	c.competition_status = competition::NOT_STARTED;
 	for (int i = 1; i <= teamCount; i++)
     {
-        std::string teamName = params["teamName" + std::to_string(i)];
+        std::string teamName = ctx.get_param("teamName" + std::to_string(i));
         char key = 64 + i; // 从 A 开始绑定按键
         c.teams.push_back(std::make_pair(teamName, key));
     }
@@ -346,17 +346,18 @@ void competition_edit_page::init()
 
     is_request_login = true;
 }
-void competition_edit_page::generate_page()
+void competition_edit_page::generate_page(const request_context& ctx, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return;
     }
+    const std::string guid = ctx.get_param("guid");
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -369,11 +370,11 @@ void competition_edit_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 编辑比赛 - Responder";
-    breadcrumb = R"(<li><a href="/main">主页</a></li><li><a href="/main/competition/detail?guid=)" + c.guid + R"(">)" + c.name + R"(</a></li><li>编辑比赛</li>)";
-    page_title = "<b>" + c.name + "</b> - 编辑比赛";
+    page.browser_title = c.name + " - 编辑比赛 - Responder";
+    page.breadcrumb = R"(<li><a href="/main">主页</a></li><li><a href="/main/competition/detail?guid=)" + c.guid + R"(">)" + c.name + R"(</a></li><li>编辑比赛</li>)";
+    page.page_title = "<b>" + c.name + "</b> - 编辑比赛";
 
-    content = (std::string)R"(
+    page.content = (std::string)R"(
 <form id="newComForm" method="post" role="form" style="margin-bottom:25px" novalidate>
 <div class="row g-4 align-items-stretch">
   <div class="col-lg-4 d-flex">
@@ -413,12 +414,12 @@ void competition_edit_page::generate_page()
           <!-- 动态插入行 -->
 )";
     for (int i = 1; i <= c.teams.size(); i++)
-        content += R"(
+        page.content += R"(
 <tr><td><b>)" + std::to_string(i) + R"(</b></td><td>
 <input type="text" name="teamName)" + std::to_string(i) + R"(" class="form-control form-control-sm" placeholder="请输入第 )" + std::to_string(i) + R"( 个队伍名称" value=")" + c.teams[i - 1].first + R"(" autocomplete="off" required>
 </td><td><kbd class="r-kbd">)" + c.teams[i - 1].second + R"(</kbd></td></tr>)";
 
-    content += R"(
+    page.content += R"(
         </tbody>
       </table>
     </div>
@@ -458,7 +459,7 @@ void competition_edit_page::generate_page()
   </div>
 </div>
 <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
-  <a class="btn btn-outline-primary px-4" href="/main/competition/detail?guid=)" + params["guid"] + R"(">取消</a>
+  <a class="btn btn-outline-primary px-4" href="/main/competition/detail?guid=)" + guid + R"(">取消</a>
   <button class="btn btn-success px-4" type="submit"><i class="bi bi-check-lg"></i> 保存修改</button>
 </div>
 </form>
@@ -557,16 +558,17 @@ void competition_edit_handler::init()
 
     is_request_login = true;
 }
-std::string competition_edit_handler::generate_response()
+std::string competition_edit_handler::generate_response(const request_context& ctx)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return "";
     }
+    const std::string guid = ctx.get_param("guid");
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -582,18 +584,18 @@ std::string competition_edit_handler::generate_response()
     c.teams.clear();
 
     int teamCount = 0;
-    for (auto& param : params)
+    for (const auto& param : ctx.params)
         if (param.first.substr(0, 8) == "teamName")
             teamCount++;
 
-    c.name = params["name"];
-    c.description = params["description"];
-    c.choice_count = std::stoi(params["choiceCount"]);
-    c.completion_count = std::stoi(params["completionCount"]);
-    c.info_count = std::stoi(params["infoCount"]);
+    c.name = ctx.get_param("name");
+    c.description = ctx.get_param("description");
+    c.choice_count = std::stoi(ctx.get_param("choiceCount"));
+    c.completion_count = std::stoi(ctx.get_param("completionCount"));
+    c.info_count = std::stoi(ctx.get_param("infoCount"));
     for (int i = 1; i <= teamCount; i++)
     {
-        std::string teamName = params["teamName" + std::to_string(i)];
+        std::string teamName = ctx.get_param("teamName" + std::to_string(i));
         char key = 64 + i; // 从 A 开始绑定按键
         c.teams.push_back(std::make_pair(teamName, key));
     }
@@ -610,19 +612,20 @@ void competition_delete_handler::init()
 
     is_request_login = true;
 }
-std::string competition_delete_handler::generate_response()
+std::string competition_delete_handler::generate_response(const request_context& ctx)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return "";
     }
+    const std::string guid = ctx.get_param("guid");
 
-    auto comp_mutex = get_competition_mutex(params["guid"]);
+    auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -685,17 +688,18 @@ void competition_detail_page::init()
 
     is_request_login = true;
 }
-void competition_detail_page::generate_page()
+void competition_detail_page::generate_page(const request_context& ctx, page_context& page)
 {
 	std::lock_guard bank_lock(problem_bank_mutex);
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return;
     }
+    const std::string guid = ctx.get_param("guid");
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -703,9 +707,9 @@ void competition_detail_page::generate_page()
         return;
     }
 
-    browser_title = c.name + " - 比赛详情 - Responder";
-    breadcrumb = R"(<li><a href="/main">主页</a></li><li>比赛详情</li>)";
-    page_title = "<b>" + c.name + "</b> - 比赛详情";
+    page.browser_title = c.name + " - 比赛详情 - Responder";
+    page.breadcrumb = R"(<li><a href="/main">主页</a></li><li>比赛详情</li>)";
+    page.page_title = "<b>" + c.name + "</b> - 比赛详情";
 
     std::string status, result, problems;
     switch (c.competition_status)
@@ -785,7 +789,7 @@ void competition_detail_page::generate_page()
         		</tbody></table>
 )";
 
-    content = R"(
+    page.content = R"(
         <div class="row g-4">
           <div class="col-lg-8 d-flex flex-column gap-4">
 
@@ -805,7 +809,7 @@ void competition_detail_page::generate_page()
   			      <div class="portfolio-info w-100">
                     <h3>参赛队伍</h3>
 )";
-    content += R"(
+    page.content += R"(
       <table class="table table-sm table-hover">
         <thead>
           <tr>
@@ -817,18 +821,18 @@ void competition_detail_page::generate_page()
         <tbody id="teamContainer">
 )";
     for (int i = 1; i <= c.teams.size(); i++)
-        content += R"(
+        page.content += R"(
 <tr>
 <td><b>)" + std::to_string(i) + R"(</b></td>
 <td class="fw-semibold">)" + c.teams[i - 1].first + R"(</td>
 <td><kbd class="r-kbd">)" + c.teams[i - 1].second + R"(</kbd></td>
 </tr>)";
 
-    content += R"(
+    page.content += R"(
         </tbody>
       </table>
 )";
-    content += R"(
+    page.content += R"(
                   </div> 
                 </div>
 
@@ -844,8 +848,8 @@ void competition_detail_page::generate_page()
             <div class="portfolio-info">
               <h3>操作</h3>
               <div class="d-flex flex-wrap gap-2">
-				<button class="btn btn-success" type="button" onclick="window.location.href='/main/competition/display?guid=)" + params["guid"] + R"('" )" + ((c.competition_status == competition::status::NOT_STARTED || c.competition_status == competition::status::PAUSED) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-display"></i> 进入比赛大屏</button>
-				<button class="btn btn-outline-primary" type="button" onclick="window.location.href='/main/competition/edit?guid=)" + params["guid"] + R"('" )" + ((c.competition_status != competition::status::NOT_STARTED) ? " disabled=\"disabled\"" : "") + R"(><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-success" type="button" onclick="window.location.href='/main/competition/display?guid=)" + guid + R"('" )" + ((c.competition_status == competition::status::NOT_STARTED || c.competition_status == competition::status::PAUSED) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-display"></i> 进入比赛大屏</button>
+				<button class="btn btn-outline-primary" type="button" onclick="window.location.href='/main/competition/edit?guid=)" + guid + R"('" )" + ((c.competition_status != competition::status::NOT_STARTED) ? " disabled=\"disabled\"" : "") + R"(><i class="bi bi-pencil"></i> 编辑</button>
 				<button class="btn btn-outline-danger" type="button" onclick="Delete();" )" + ((c.competition_status != competition::status::ONGOING) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-trash"></i> 删除</button>
               </div>
             </div>
@@ -893,13 +897,14 @@ void competition_display_page::init()
 
     is_request_login = true;
 }
-void competition_display_page::generate_page()
+void competition_display_page::generate_page(const request_context& ctx, page_context& page)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return;
     }
+    const std::string guid = ctx.get_param("guid");
 
     competition c;
     competition_session session;
@@ -907,10 +912,10 @@ void competition_display_page::generate_page()
     std::string initial_problem_html;
     {
         std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
-        auto comp_mutex = get_competition_mutex(params["guid"]);
+        auto comp_mutex = get_competition_mutex(guid);
         std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
-        c.load(params["guid"]);
+        c.load(guid);
 
         if (c.teams.size() == 0)
         {
@@ -929,7 +934,7 @@ void competition_display_page::generate_page()
     }
 	std::int64_t server_now = static_cast<std::int64_t>(std::time(nullptr));
 
-    content = R"(<!DOCTYPE html>
+    page.content = R"(<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -1163,7 +1168,7 @@ void competition_display_page::generate_page()
 
 #define ID std::to_string(i)
     for (int i = 0; i < c.teams.size(); i++)
-        content += R"(
+        page.content += R"(
                 <tr class="quiz-team-row" data-team-row=")" + ID + R"(">
                   <td class="quiz-team-name text-start">)" + c.teams[i].first + R"(</td>
                   <td class="quiz-team-score text-center tabular-nums" id="teamscore)" + ID + R"(">)" + std::to_string(c.team_scores[i]) + R"(</td>
@@ -1177,7 +1182,7 @@ void competition_display_page::generate_page()
                 </tr>
 )";
 #undef ID
-    content += R"(
+    page.content += R"(
               </tbody>
             </table>
           </div>
@@ -1234,7 +1239,7 @@ void competition_display_page::generate_page()
 	TeamsInfo[TeamsInfo.size() - 1] = ']';
     TeamsInfo += ";";
 
-    content += TeamsInfo + R"(
+    page.content += TeamsInfo + R"(
     var scores = )";
 
     TeamsInfo = "[";
@@ -1243,7 +1248,7 @@ void competition_display_page::generate_page()
     TeamsInfo[TeamsInfo.size() - 1] = ']';
     TeamsInfo += ";";
 
-    content += TeamsInfo + R"(
+    page.content += TeamsInfo + R"(
     var team_keys = )";
 
     TeamsInfo = "[";
@@ -1252,7 +1257,7 @@ void competition_display_page::generate_page()
     TeamsInfo[TeamsInfo.size() - 1] = ']';
     TeamsInfo += ";";
 
-    content += TeamsInfo + R"(
+    page.content += TeamsInfo + R"(
     var has_initial_session = )" + std::string(has_session ? "true" : "false") + R"(;
     var initial_session = )" + safe_json_for_script(session.to_json()) + R"(;
     var server_now = )" + std::to_string(server_now) + R"(;
@@ -1280,19 +1285,20 @@ void competition_display_scores_handler::init()
 
     is_request_login = true;
 }
-std::string competition_display_scores_handler::generate_response()
+std::string competition_display_scores_handler::generate_response(const request_context& ctx)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return "fail : guid not found";
     }
+    const std::string guid = ctx.get_param("guid");
 
-    auto comp_mutex = get_competition_mutex(params["guid"]);
+    auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -1306,8 +1312,7 @@ std::string competition_display_scores_handler::generate_response()
         return "fail : competition isn't ongoing";
     }
 
-    if (params.find("team") == params.end()
-        || params.find("score") == params.end())
+    if (!ctx.has_param("team") || !ctx.has_param("score"))
     {
         // error: TODO
         return "fail : team or score not found";
@@ -1315,8 +1320,8 @@ std::string competition_display_scores_handler::generate_response()
 
     int team_idx = -1;
     int new_score = 0;
-    if (!try_parse_int(params["team"], team_idx) || team_idx < 0 || static_cast<size_t>(team_idx) >= c.team_scores.size()
-        || !try_parse_int(params["score"], new_score))
+    if (!try_parse_int(ctx.get_param("team"), team_idx) || team_idx < 0 || static_cast<size_t>(team_idx) >= c.team_scores.size()
+        || !try_parse_int(ctx.get_param("score"), new_score))
     {
         return "fail : invalid team or score";
     }
@@ -1344,20 +1349,21 @@ void competition_display_problem_handler::init()
 
     is_request_login = true;
 }
-std::string competition_display_problem_handler::generate_response()
+std::string competition_display_problem_handler::generate_response(const request_context& ctx)
 {
 	std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return "fail : guid not found";
     }
+    const std::string guid = ctx.get_param("guid");
 
-    auto comp_mutex = get_competition_mutex(params["guid"]);
+    auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -1371,17 +1377,17 @@ std::string competition_display_problem_handler::generate_response()
         return "fail : competition isn't ongoing";
     }
 
-    if (params.find("reshow") != params.end() && params["reshow"] == "1")
+    if (ctx.get_param("reshow") == "1")
     {
         competition_session session;
         bool has_session = session.load(c.guid, c.teams.size());
 
         int target_type = -1;
         int target_id = 0;
-        if (params.find("type") != params.end() && params.find("id") != params.end())
+        if (ctx.has_param("type") && ctx.has_param("id"))
         {
             int parsed_type = -1, parsed_id = 0;
-            if (try_parse_int(params["type"], parsed_type) && try_parse_int(params["id"], parsed_id))
+            if (try_parse_int(ctx.get_param("type"), parsed_type) && try_parse_int(ctx.get_param("id"), parsed_id))
             {
                 target_type = parsed_type;
                 target_id = parsed_id;
@@ -1404,9 +1410,9 @@ std::string competition_display_problem_handler::generate_response()
 
         bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
             bool switching_problem = (s.current_type != target_type || s.current_id != target_id);
-            if (params.find("state") != params.end())
+            if (ctx.has_param("state"))
             {
-                json client_state = json::parse(params["state"], nullptr, false);
+                json client_state = json::parse(ctx.get_param("state"), nullptr, false);
                 if (client_state.is_object())
                     s.apply_client_state(client_state, c.teams.size());
             }
@@ -1432,17 +1438,17 @@ std::string competition_display_problem_handler::generate_response()
         return reshow_html;
     }
 
-    if (params.find("type") == params.end())
+    if (!ctx.has_param("type"))
     {
         // error: TODO
         return "fail : type not found";
     }
 
     int req_type = -1;
-    if (!try_parse_int(params["type"], req_type) || req_type < 0 || req_type > 2)
+    if (!try_parse_int(ctx.get_param("type"), req_type) || req_type < 0 || req_type > 2)
         return "fail : invalid type";
 
-    if (params.find("requestcomplexity") != params.end()) // 用于轮答，请求一种数量足够的难度，失败则返回0; 参数只用于标记，忽略其值
+    if (ctx.has_param("requestcomplexity")) // 用于轮答，请求一种数量足够的难度，失败则返回0; 参数只用于标记，忽略其值
     {
 		int spare_count[4]; // 1-3分别对应难度1-3
 
@@ -1484,9 +1490,9 @@ std::string competition_display_problem_handler::generate_response()
     }
 
     int requested_complexity = 0; // 默认为0：不限
-    if (params.find("complexity") != params.end()) // 用于轮答，以前请求了固定的难度
+    if (ctx.has_param("complexity")) // 用于轮答，以前请求了固定的难度
     {
-		if (!try_parse_int(params["complexity"], requested_complexity) || requested_complexity < 0 || requested_complexity > 3)
+		if (!try_parse_int(ctx.get_param("complexity"), requested_complexity) || requested_complexity < 0 || requested_complexity > 3)
             requested_complexity = 0;
     }
     
@@ -1641,9 +1647,9 @@ std::string competition_display_problem_handler::generate_response()
 
     bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
         bool has_client_state = false;
-        if (params.find("state") != params.end())
+        if (ctx.has_param("state"))
         {
-            json client_state = json::parse(params["state"], nullptr, false);
+            json client_state = json::parse(ctx.get_param("state"), nullptr, false);
             if (client_state.is_object())
             {
                 s.apply_client_state(client_state, c.teams.size());
@@ -1676,16 +1682,17 @@ void competition_display_session_handler::init()
 
     is_request_login = true;
 }
-std::string competition_display_session_handler::generate_response()
+std::string competition_display_session_handler::generate_response(const request_context& ctx)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
         return "fail : guid not found";
+    const std::string guid = ctx.get_param("guid");
 
-    auto comp_mutex = get_competition_mutex(params["guid"]);
+    auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
         return "fail : guid not existed";
@@ -1694,23 +1701,23 @@ std::string competition_display_session_handler::generate_response()
         return "fail : competition isn't ongoing";
 
     bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
-        if (params.find("state") != params.end())
+        if (ctx.has_param("state"))
         {
-            json client_state = json::parse(params["state"], nullptr, false);
+            json client_state = json::parse(ctx.get_param("state"), nullptr, false);
             if (client_state.is_object())
                 s.apply_client_state(client_state, c.teams.size());
         }
 
-        if (params.find("timer_action") != params.end())
+        if (ctx.has_param("timer_action"))
         {
-            const std::string& action = params["timer_action"];
+            const std::string action = ctx.get_param("timer_action");
             int parsed = 0;
-            if (params.find("timer_mode") != params.end() && try_parse_int(params["timer_mode"], parsed))
+            if (ctx.has_param("timer_mode") && try_parse_int(ctx.get_param("timer_mode"), parsed))
                 s.timer_mode = std::clamp(parsed, 0, 2);
 
             if (action == "start")
             {
-                if (params.find("timer_duration") != params.end() && try_parse_int(params["timer_duration"], parsed))
+                if (ctx.has_param("timer_duration") && try_parse_int(ctx.get_param("timer_duration"), parsed))
                     s.timer_duration = std::max(0, parsed);
                 s.timer_started_at = static_cast<std::int64_t>(std::time(nullptr));
                 s.timer_paused = false;
@@ -1718,7 +1725,7 @@ std::string competition_display_session_handler::generate_response()
             }
             else if (action == "pause")
             {
-                if (params.find("timer_remaining") != params.end() && try_parse_int(params["timer_remaining"], parsed))
+                if (ctx.has_param("timer_remaining") && try_parse_int(ctx.get_param("timer_remaining"), parsed))
                     s.timer_remaining = std::max(0, parsed);
                 s.timer_started_at = 0;
                 s.timer_paused = true;
@@ -1743,19 +1750,20 @@ void competition_enddisplay_handler::init()
 
     is_request_login = true;
 }
-std::string competition_enddisplay_handler::generate_response()
+std::string competition_enddisplay_handler::generate_response(const request_context& ctx)
 {
-    if (params.find("guid") == params.end())
+    if (!ctx.has_param("guid"))
     {
         // error: TODO
         return "fail : guid not found";
     }
+    const std::string guid = ctx.get_param("guid");
 
-    auto comp_mutex = get_competition_mutex(params["guid"]);
+    auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
-    c.load(params["guid"]);
+    c.load(guid);
 
     if (c.teams.size() == 0)
     {
@@ -1769,14 +1777,14 @@ std::string competition_enddisplay_handler::generate_response()
         return "fail : competition isn't ongoing";
     }
 
-    if (params.find("action") == params.end())
+    if (!ctx.has_param("action"))
     {
         // error: TODO
         return "fail : action not found";
     }
 
     int action_val = -1;
-    if (!try_parse_int(params["action"], action_val) || (action_val != 0 && action_val != 1))
+    if (!try_parse_int(ctx.get_param("action"), action_val) || (action_val != 0 && action_val != 1))
         return "fail : invalid action";
 
     switch (action_val)

@@ -17,12 +17,12 @@ static void write_problem_json(const std::string& filename, const json& record)
 	out.close();
 }
 
-void problem_completion::load(std::string filename)
+void problem_completion::load(std::string filename, std::ostream& log)
 {
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
-		std::cout << "Failed to load problem from " << filename << std::endl;
+		log << "Failed to load problem from " << filename << std::endl;
 		// TODO: MessageBox
 		return;
 	}
@@ -46,12 +46,12 @@ void problem_completion::save(std::string filename)
 	write_problem_json(filename, jsbuf);
 }
 
-void problem_choice::load(std::string filename)
+void problem_choice::load(std::string filename, std::ostream& log)
 {
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
-		std::cout << "Failed to load problem from " << filename << std::endl;
+		log << "Failed to load problem from " << filename << std::endl;
 		// TODO: MessageBox
 		return;
 	}
@@ -77,12 +77,12 @@ void problem_choice::save(std::string filename)
 	write_problem_json(filename, jsbuf);
 }
 
-void problem_info::load(std::string filename)
+void problem_info::load(std::string filename, std::ostream& log)
 {
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
-		std::cout << "Failed to load problem from " << filename << std::endl;
+		log << "Failed to load problem from " << filename << std::endl;
 		// TODO: MessageBox
 		return;
 	}
@@ -108,12 +108,12 @@ void problem_info::save(std::string filename)
 	write_problem_json(filename, jsbuf);
 }
 
-void problem_list::load(std::string filename)
+void problem_list::load(std::string filename, std::ostream& log)
 {
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
-		std::cout << "Failed to load problem list from " << filename << std::endl;
+		log << "Failed to load problem list from " << filename << std::endl;
 		// TODO: MessageBox
 		return;
 	}
@@ -126,21 +126,21 @@ void problem_list::load(std::string filename)
 	for (const auto& choice : _list)
 	{
 		choice_problems.push_back(std::make_pair(problem_choice(), choice.second));
-		choice_problems.back().first.load("data/problems/choice_" + std::to_string(choice.first) + ".json");
+		choice_problems.back().first.load("data/problems/choice_" + std::to_string(choice.first) + ".json", log);
 	}
 
 	jsbuf["completion_problems"].get_to(_list);
 	for (const auto& completion : _list)
 	{
 		completion_problems.push_back(std::make_pair(problem_completion(), completion.second));
-		completion_problems.back().first.load("data/problems/completion_" + std::to_string(completion.first) + ".json");
+		completion_problems.back().first.load("data/problems/completion_" + std::to_string(completion.first) + ".json", log);
 	}
 
 	jsbuf["info_problems"].get_to(_list);
 	for (const auto& info : _list)
 	{
 		info_problems.push_back(std::make_pair(problem_info(), info.second));
-		info_problems.back().first.load("data/problems/info_" + std::to_string(info.first) + ".json");
+		info_problems.back().first.load("data/problems/info_" + std::to_string(info.first) + ".json", log);
 	}
 }
 void problem_list::save(std::string filename)
@@ -212,9 +212,9 @@ void problem_list::delete_duplicates()
 		info_problems[i].first.id = i + 1; // id 从 1 开始
 }
 
-void problem_list::convert(std::string filename_in, std::string folder_out)
+void problem_list::convert(std::string filename_in, std::string folder_out, std::ostream& log)
 {
-	std::cout << "Converting problems from " << filename_in << " to " << folder_out << " ..." << std::endl;
+	log << "Converting problems from " << filename_in << " to " << folder_out << " ..." << std::endl;
 
 	responder_problem_output_handler new_pl;
 
@@ -236,7 +236,7 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 					break; // 到达文件末尾时退出
 				else 
 				{
-					std::cout << "Error reading integers (complexity, type). Skipping line." << std::endl;
+					log << "Error reading integers (complexity, type). Skipping line." << std::endl;
 					fin.clear(); // 清除错误状态
 					fin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // 跳过当前行
 					continue; // 继续下一次循环
@@ -246,7 +246,7 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 
 			if (!(1 <= complexity && complexity <= 3))
 			{
-				std::cout << "Invalid complexity value: " << complexity << ". Setting to 1." << std::endl;
+				log << "Invalid complexity value: " << complexity << ". Setting to 1." << std::endl;
 				complexity = 1;
 			}
 
@@ -265,7 +265,7 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 				new_pl.choice_problems.back().first.id = new_pl.choice_problems.size(); // id 从 1 开始
 				new_pl.choice_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=choice, id=" << new_pl.choice_problems.size() << std::endl;
+				log << " - converted: type=choice, id=" << new_pl.choice_problems.size() << std::endl;
 
 				break;
 
@@ -276,7 +276,7 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 				new_pl.completion_problems.back().first.id = new_pl.completion_problems.size(); // id 从 1 开始
 				new_pl.completion_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=completion, id=" << new_pl.completion_problems.size() << std::endl;
+				log << " - converted: type=completion, id=" << new_pl.completion_problems.size() << std::endl;
 
 				break;
 
@@ -292,7 +292,7 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 				new_pl.info_problems.back().first.id = new_pl.info_problems.size(); // id 从 1 开始
 				new_pl.info_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=info, id=" << new_pl.info_problems.size() << std::endl;
+				log << " - converted: type=info, id=" << new_pl.info_problems.size() << std::endl;
 
 				break;
 
@@ -310,25 +310,25 @@ void problem_list::convert(std::string filename_in, std::string folder_out)
 		CreateDirectoryA(folder_out.c_str(), NULL);
 		new_pl.output_to_folder(folder_out);
 
-		std::cout << "Successfully converted problems and saved to " << folder_out << std::endl;
+		log << "Successfully converted problems and saved to " << folder_out << std::endl;
 	}
 	catch (const std::ios_base::failure& e) {
-		std::cout << "I/O error: " << e.what() << std::endl;
+		log << "I/O error: " << e.what() << std::endl;
 	}
 	catch (const std::exception& e) {
-		std::cout << "An error occurred: " << e.what() << std::endl;
+		log << "An error occurred: " << e.what() << std::endl;
 	}
 	catch (...) {
-		std::cout << "An unknown error occurred." << std::endl;
+		log << "An unknown error occurred." << std::endl;
 	}
 }
 
-void problem_list::merge(std::string filename_in, std::string folder_out)
+void problem_list::merge(std::string filename_in, std::string folder_out, std::ostream& log)
 {
-	std::cout << "Merging problems from " << filename_in << " into " << folder_out << " ..." << std::endl;
+	log << "Merging problems from " << filename_in << " into " << folder_out << " ..." << std::endl;
 
 	responder_problem_output_handler new_pl;
-	new_pl.load(folder_out + "problem_list.json"); // 读入原有题目列表和题目信息，进行合并后覆盖写出
+	new_pl.load(folder_out + "problem_list.json", log); // 读入原有题目列表和题目信息，进行合并后覆盖写出
 
 	try
 	{
@@ -346,7 +346,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 					break; // 到达文件末尾时退出
 				else
 				{
-					std::cout << "Error reading integers (complexity, type). Skipping line." << std::endl;
+					log << "Error reading integers (complexity, type). Skipping line." << std::endl;
 					fin.clear(); // 清除错误状态
 					fin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // 跳过当前行
 					continue; // 继续下一次循环
@@ -356,7 +356,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 
 			if (!(1 <= complexity && complexity <= 3))
 			{
-				std::cout << "Invalid complexity value: " << complexity << ". Setting to 1." << std::endl;
+				log << "Invalid complexity value: " << complexity << ". Setting to 1." << std::endl;
 				complexity = 1;
 			}
 
@@ -383,7 +383,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 						existing_problem.first.answer == new_problem.answer)
 					{
 						is_duplicate = true;
-						std::cout << " - skipped: duplicate choice problem detected." << std::endl;
+						log << " - skipped: duplicate choice problem detected." << std::endl;
 					}
 				}
 				if (is_duplicate)
@@ -393,7 +393,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 				new_pl.choice_problems.back().first.id = new_pl.choice_problems.size(); // id 接着原有题目的最大id继续编号
 				new_pl.choice_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=choice, id=" << new_pl.choice_problems.size() << std::endl;
+				log << " - converted: type=choice, id=" << new_pl.choice_problems.size() << std::endl;
 
 			}
 			break;
@@ -412,7 +412,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 						existing_problem.first.answer == new_problem.answer)
 					{
 						is_duplicate = true;
-						std::cout << " - skipped: duplicate completion problem detected." << std::endl;
+						log << " - skipped: duplicate completion problem detected." << std::endl;
 					}
 				}
 				if (is_duplicate)
@@ -422,7 +422,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 				new_pl.completion_problems.back().first.id = new_pl.completion_problems.size(); // id 接着原有题目的最大id继续编号
 				new_pl.completion_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=completion, id=" << new_pl.completion_problems.size() << std::endl;
+				log << " - converted: type=completion, id=" << new_pl.completion_problems.size() << std::endl;
 			}
 			break;
 
@@ -446,7 +446,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 						existing_problem.first.answer == new_problem.answer)
 					{
 						is_duplicate = true;
-						std::cout << " - skipped: duplicate info problem detected." << std::endl;
+						log << " - skipped: duplicate info problem detected." << std::endl;
 					}
 				}
 				if (is_duplicate)
@@ -456,7 +456,7 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 				new_pl.info_problems.back().first.id = new_pl.info_problems.size(); // id 接着原有题目的最大id继续编号
 				new_pl.info_problems.back().first.complexity = complexity;
 
-				std::cout << " - converted: type=info, id=" << new_pl.info_problems.size() << std::endl;
+				log << " - converted: type=info, id=" << new_pl.info_problems.size() << std::endl;
 			}
 			break;
 
@@ -472,16 +472,16 @@ void problem_list::merge(std::string filename_in, std::string folder_out)
 		CreateDirectoryA(folder_out.c_str(), NULL);
 		new_pl.output_to_folder(folder_out);
 
-		std::cout << "Successfully merged problems and saved to " << folder_out << std::endl;
+		log << "Successfully merged problems and saved to " << folder_out << std::endl;
 	}
 	catch (const std::ios_base::failure& e) {
-		std::cout << "I/O error: " << e.what() << std::endl;
+		log << "I/O error: " << e.what() << std::endl;
 	}
 	catch (const std::exception& e) {
-		std::cout << "An error occurred: " << e.what() << std::endl;
+		log << "An error occurred: " << e.what() << std::endl;
 	}
 	catch (...) {
-		std::cout << "An unknown error occurred." << std::endl;
+		log << "An unknown error occurred." << std::endl;
 	}
 }
 

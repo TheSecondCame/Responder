@@ -6,51 +6,75 @@
 #include "responder_request.h"
 #include "responder_template.h"
 #include "encoding.h"
+#include <algorithm>
+#include <cctype>
 
 extern std::string authentic_token;
 
-// 解析 application/x-www-form-urlencoded 请求体，填充到 params。
-// 原实现只从查询字符串取参数，导致浏览器提交的表单（POST body）取不到值，
-// 这里补齐表单体解析，使 params 同时覆盖查询串与表单体两种来源。
-static void parse_form_urlencoded(const httplib::Request& req, std::map<std::string, std::string>& params)
+namespace
 {
-	auto content_type = req.get_header_value("Content-Type");
-	if (content_type.find("application/x-www-form-urlencoded") == std::string::npos)
-		return;
-
-	std::string data = req.body;
-	std::string::size_type pos = 0;
-	while (pos < data.size())
+	bool contains_case_insensitive(const std::string& haystack, const std::string& needle)
 	{
-		std::string::size_type amp = data.find('&', pos);
-		if (amp == std::string::npos)
-			amp = data.size();
-
-		std::string pair = data.substr(pos, amp - pos);
-		if (!pair.empty())
-		{
-			std::string::size_type eq = pair.find('=');
-			std::string key, value;
-			if (eq == std::string::npos)
-			{
-				key = pair;
-			}
-			else
-			{
-				key = pair.substr(0, eq);
-				value = pair.substr(eq + 1);
-			}
-			key = decodeURI(key);
-			value = decodeURI(value);
-			// 表单中 + 代表空格
-			for (auto& c : value)
-				if (c == '+') c = ' ';
-			for (auto& c : key)
-				if (c == '+') c = ' ';
-			params[key] = value; // 覆盖同名查询串参数，表单体优先
-		}
-		pos = amp + 1;
+		auto it = std::search(
+			haystack.begin(), haystack.end(),
+			needle.begin(), needle.end(),
+			[](unsigned char a, unsigned char b) {
+				return std::tolower(a) == std::tolower(b);
+			});
+		return it != haystack.end();
 	}
+
+	// 解析 application/x-www-form-urlencoded 请求体，填充到 params。
+	// 原实现只从查询字符串取参数，导致浏览器提交的表单（POST body）取不到值，
+	// 这里补齐表单体解析，使 params 同时覆盖查询串与表单体两种来源。
+	void parse_form_urlencoded(const httplib::Request& req, std::map<std::string, std::string>& params)
+	{
+		auto content_type = req.get_header_value("Content-Type");
+		if (!contains_case_insensitive(content_type, "application/x-www-form-urlencoded"))
+			return;
+
+		const std::string& data = req.body;
+		std::string::size_type pos = 0;
+		while (pos < data.size())
+		{
+			std::string::size_type amp = data.find('&', pos);
+			if (amp == std::string::npos)
+				amp = data.size();
+
+			std::string pair = data.substr(pos, amp - pos);
+			if (!pair.empty())
+			{
+				std::string::size_type eq = pair.find('=');
+				std::string key, value;
+				if (eq == std::string::npos)
+				{
+					key = pair;
+				}
+				else
+				{
+					key = pair.substr(0, eq);
+					value = pair.substr(eq + 1);
+				}
+				key = decode_uri(key, true);
+				value = decode_uri(value, true);
+				params[key] = value; // 覆盖同名查询串参数，表单体优先
+			}
+			pos = amp + 1;
+		}
+	}
+}
+
+request_context build_request_context(const httplib::Request& req, bool parse_urlencoded_body)
+{
+	request_context ctx;
+	ctx.body = req.body;
+	for (const auto& kv : req.params)
+		ctx.params.insert(kv);
+	ctx.req_form = req.form; // multipart 表单（含上传文件）；非 multipart 请求时为空
+	ctx.headers = req.headers;
+	if (parse_urlencoded_body)
+		parse_form_urlencoded(req, ctx.params);
+	return ctx;
 }
 
 std::string generate_random_token(size_t length, std::string charset) // by ChatGPT
@@ -104,16 +128,22 @@ std::string get_token(const httplib::Request & req) // by ChatGPT
     return "";
 }
 
-std::string responder_page::generate_response()
+std::string responder_page::generate_response(const request_context& ctx)
 {
-    content = "";
-	generate_page();
+	page_context page;
+	page.browser_title = browser_title;
+	page.page_title = page_title;
+	page.breadcrumb = breadcrumb;
+	page.is_index_page = is_index_page;
+	page.is_full_custom = is_full_custom;
 
-    if (is_full_custom)
-		return content;
+	generate_page(ctx, page);
 
-    return output_html_code(browser_title, breadcrumb, page_title, content,
-        is_index_page, is_request_login);
+	if (page.is_full_custom)
+		return page.content;
+
+	return output_html_code(page.browser_title, page.breadcrumb, page.page_title, page.content,
+		page.is_index_page, is_request_login);
 }
 
 void responder_page::set_handler(httplib::Server& svr)
@@ -121,19 +151,8 @@ void responder_page::set_handler(httplib::Server& svr)
     init();
     std::cout << "Set Handler: " << address << std::endl;
 	svr.Get(address, [this](const httplib::Request& req, httplib::Response& res) {
-        // 获取请求体数据
-        body = req.body;
-
         // 在服务器端打印请求
         std::cout << "Received GET request : " << address << std::endl;
-
-		params.clear();
-        auto _param = req.params;
-        for (const auto& key : _param) {
-            params.insert(std::make_pair(key.first, key.second));
-        }
-
-		req_form = req.form; // multipart 表单（含上传文件）；非 multipart 请求时为空
 
 		if (is_request_login)
         {
@@ -150,14 +169,15 @@ void responder_page::set_handler(httplib::Server& svr)
             }
 		}
 
-		res.set_content(generate_response(), "text/html;charset=utf-8");
+		request_context ctx = build_request_context(req, false);
+		res.set_content(generate_response(ctx), "text/html;charset=utf-8");
 	});
 
     if (address[address.size() - 1] != '/')
     {
         std::string address_slash = address + "/";
-        svr.Get(address_slash, [this](const httplib::Request& req, httplib::Response& res) {
-            res.set_redirect(address);
+        svr.Get(address_slash, [target = address](const httplib::Request&, httplib::Response& res) {
+            res.set_redirect(target);
         });
     }
 }
@@ -167,20 +187,8 @@ void responder_post_request::set_handler(httplib::Server& svr)
     init();
     std::cout << "Set Handler: " << address << std::endl;
     svr.Post(address, [this](const httplib::Request& req, httplib::Response& res) {
-        // 获取请求体数据
-        body = req.body;
-
         // 在服务器端打印请求
         std::cout << "Received POST request : " << address << std::endl;
-
-        params.clear();
-        auto _param = req.params;
-        for (const auto& key : _param) {
-            params.insert(std::make_pair(key.first, key.second));
-        }
-
-        req_form = req.form; // multipart 表单（含上传文件）；非 multipart 请求时为空
-        parse_form_urlencoded(req, params); // 解析普通表单体
 
         if (is_request_login)
         {
@@ -192,7 +200,8 @@ void responder_post_request::set_handler(httplib::Server& svr)
             }
         }
 
-        res.set_content(generate_response(), "text/html;charset=utf-8");
+        request_context ctx = build_request_context(req, true);
+        res.set_content(generate_response(ctx), "text/html;charset=utf-8");
     });
 }
 
@@ -201,18 +210,7 @@ void responder_post_page::set_handler(httplib::Server& svr)
     init();
     std::cout << "Set Handler: " << address << " (POST)" << std::endl;
     svr.Post(address, [this](const httplib::Request& req, httplib::Response& res) {
-        body = req.body;
-
         std::cout << "Received POST request : " << address << std::endl;
-
-        params.clear();
-        auto _param = req.params;
-        for (const auto& key : _param) {
-            params.insert(std::make_pair(key.first, key.second));
-        }
-
-        req_form = req.form;                 // multipart 表单（含上传文件）
-        parse_form_urlencoded(req, params);  // 普通表单体
 
         if (is_request_login)
         {
@@ -224,6 +222,7 @@ void responder_post_page::set_handler(httplib::Server& svr)
             }
         }
 
-        res.set_content(generate_response(), "text/html;charset=utf-8");
+        request_context ctx = build_request_context(req, true);
+        res.set_content(generate_response(ctx), "text/html;charset=utf-8");
     });
 }

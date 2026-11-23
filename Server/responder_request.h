@@ -7,42 +7,72 @@
 #define RESPONDER_REQUEST_H
 
 #include "httplib.h"
+#include <map>
+#include <string>
 
 std::string generate_random_token(size_t length, std::string charset);
 
+// 单次 HTTP 请求的局部上下文（仅在当次请求栈上构造，避免多线程处理器共享竞态）
+struct request_context
+{
+	std::map<std::string, std::string> params;
+	std::string body;
+	httplib::MultipartFormData req_form;
+	httplib::Headers headers;
+
+	bool has_param(const std::string& key) const
+	{
+		return params.find(key) != params.end();
+	}
+
+	std::string get_param(const std::string& key, const std::string& default_value = "") const
+	{
+		auto it = params.find(key);
+		return (it != params.end()) ? it->second : default_value;
+	}
+};
+
+// 单次页面渲染的局部输出上下文（由处理器默认元数据初始化，避免多线程覆盖 title/content）
+struct page_context
+{
+	std::string browser_title;
+	std::string page_title;
+	std::string breadcrumb;
+	std::string content;
+	bool is_index_page = true;
+	bool is_full_custom = false;
+};
+
+request_context build_request_context(const httplib::Request& req, bool parse_urlencoded_body);
+
 class responder_request
-	// 所有请求处理程序的基类，包含一些通用的成员变量和函数
+	// 所有请求处理程序的基类。除 init() 初始化的不可变路由配置外，不持有单次请求的可变状态
 {
 protected:
 	std::string address;               // 请求地址（不包含查询字符串）
-	std::map<std::string, std::string> params;
-	                                   // 请求参数（从查询字符串中解析，或从表单数据中解析）
-	std::string body;                  // 请求体数据（仅在处理post请求时使用）
-	httplib::MultipartFormData req_form;
-	                                   // multipart 表单数据（含上传文件），仅当请求为 multipart 时有内容
-	bool is_request_login;             // 是否登录才能访问
+	bool is_request_login = false;     // 是否登录才能访问
 
-	virtual void init() = 0;           // 需在子类自行实现初始化地址和其他参数的函数
-	virtual std::string generate_response() = 0;
+	virtual void init() = 0;           // 需在子类自行实现初始化地址和其他配置的函数
+	virtual std::string generate_response(const request_context& ctx) = 0;
 
 public:
-	virtual void set_handler(httplib::Server &svr) = 0;
+	virtual ~responder_request() = default;
+	virtual void set_handler(httplib::Server& svr) = 0;
 };
 
 class responder_page : public responder_request
 	// 可供浏览器访问的主页和菜单页的基类，包含一些通用的页面元素和生成响应的函数
 {
 protected:
-	std::string browser_title;         // 浏览器标签页标题
-	std::string page_title;            // 页面内标题（浅蓝色顶栏）
-	std::string breadcrumb;            // 面包屑导航（主页 > ... > 当前页）
+	std::string browser_title;         // 默认浏览器标签页标题（init 中设置）
+	std::string page_title;            // 默认页面内标题（init 中设置）
+	std::string breadcrumb;            // 默认面包屑导航（init 中设置）
 
-	std::string content;               // 页面内容（HTML代码），需在generate_page()中生成
 	bool is_index_page = true;         // 是否包含浅蓝色顶栏
 	bool is_full_custom = false;       // 是否完全自定义输出（不使用模板）
 
-	std::string generate_response() override;
-	virtual void generate_page() = 0;  // 需在子类自行实现生成页面内容的函数
+	std::string generate_response(const request_context& ctx) override;
+	virtual void generate_page(const request_context& ctx, page_context& page) = 0;
 public:
 	void set_handler(httplib::Server& svr) override;
 };
@@ -52,7 +82,7 @@ class responder_post_request : public responder_request
 {
 public:
 	void set_handler(httplib::Server& svr) override;
-	// virtual void generate_response() 没有实现，需在子类自行实现生成响应内容的函数
+	// virtual void generate_response(const request_context& ctx) 需在子类实现
 };
 
 class responder_post_page : public responder_page

@@ -6,6 +6,7 @@
 #ifndef RES_SERVER_CORE_H
 #define RES_SERVER_CORE_H
 
+#include <mutex>
 #include <string>
 
 namespace server_core
@@ -30,6 +31,9 @@ namespace server_core
 	// 最近一次 start() 期间的错误信息；为空表示无错误。
 	std::string last_error();
 }
+
+// 保护 authentic_pin 的并发读写（login_handler 轮换 PIN，GUI 定时读取）
+inline std::mutex authentic_pin_mutex;
 
 // 当前登录用的 6 位 PIN（登录成功后会自动轮换，GUI 需要实时读取）
 extern std::string authentic_pin;

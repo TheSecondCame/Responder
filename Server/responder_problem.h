@@ -24,7 +24,7 @@ public:
 	std::string content;
 	std::string answer;
 	int complexity; // 1-3, 1 for easiest, 3 for hardest, 0 for undefined
-	virtual void load(std::string filename);
+	virtual void load(std::string filename, std::ostream& log = std::cout);
 	virtual void save(std::string filename);
 };
 
@@ -32,7 +32,7 @@ class problem_choice : public problem_completion
 {
 public:
 	std::vector<std::string> options;
-	void load(std::string filename) override;
+	void load(std::string filename, std::ostream& log = std::cout) override;
 	void save(std::string filename) override;
 };
 
@@ -40,7 +40,7 @@ class problem_info : public problem_completion
 {
 public:
 	std::vector<std::string> info;
-	void load(std::string filename) override;
+	void load(std::string filename, std::ostream& log = std::cout) override;
 	void save(std::string filename) override;
 };
 
@@ -50,7 +50,7 @@ public:
 	std::vector<std::pair<problem_choice, int>> choice_problems;
 	std::vector<std::pair<problem_completion, int>> completion_problems;
 	std::vector<std::pair<problem_info, int>> info_problems;   // int: 0 for unused, 1 for used
-	void load(std::string filename);
+	void load(std::string filename, std::ostream& log = std::cout);
 	void save(std::string filename);
 
 	void delete_duplicates(); // 删除重复题目（根据题目内容和选项/信息判断）
@@ -72,8 +72,8 @@ public:
 		return ans;
 	}
 
-	static void convert(std::string filename_in, std::string folder_out);
-	static void merge(std::string filename_in, std::string folder_out);
+	static void convert(std::string filename_in, std::string folder_out, std::ostream& log = std::cout);
+	static void merge(std::string filename_in, std::string folder_out, std::ostream& log = std::cout);
 
 private:
 	template <typename T>
