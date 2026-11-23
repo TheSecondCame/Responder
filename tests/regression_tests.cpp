@@ -552,16 +552,22 @@ static void TestConcurrentRequestContextRouting()
     int port = svr.bind_to_any_port("127.0.0.1");
     std::cout << "[ConcurrentTest] bound port=" << port << std::endl;
     assert(port > 0);
-    std::thread server_thread([&]() { svr.listen_after_bind(); });
-    svr.wait_until_ready();
-    std::cout << "[ConcurrentTest] server ready" << std::endl;
 
-    // Suppress verbose per-request std::cout noise during concurrent stress test
-    std::ostringstream sink;
-    std::streambuf* orig_cout = std::cout.rdbuf(sink.rdbuf());
+    // Stateless discarding streambuf (no shared mutable buffer) installed before starting
+    // server_thread and restored only after all server worker threads are joined.
+    class NullStreamBuf : public std::streambuf
+    {
+    protected:
+        int overflow(int ch) override
+        {
+            return (ch == traits_type::eof()) ? traits_type::not_eof(ch) : ch;
+        }
+        std::streamsize xsputn(const char*, std::streamsize n) override
+        {
+            return n;
+        }
+    };
 
-    // Match httplib's worker pool (8) with keep-alive connections so all workers stay busy
-    // concurrently without overflowing Winsock's default listen(backlog=5) on initial connect.
     const int kWorkers = 8;
     const int kPerWorker = 15; // 120 GET + 120 POST concurrent requests
     std::atomic<int> failures{ 0 };
@@ -569,80 +575,101 @@ static void TestConcurrentRequestContextRouting()
     std::atomic<bool> go{ false };
     std::mutex err_mutex;
     std::vector<std::string> err_samples;
-    std::vector<std::thread> clients;
-    for (int w = 0; w < kWorkers; ++w)
+
     {
-        clients.emplace_back([&, w]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(w * 5));
-            httplib::Client cli("127.0.0.1", port);
-            cli.set_keep_alive(true);
-            cli.set_connection_timeout(5, 0);
-            cli.set_read_timeout(5, 0);
-            httplib::Headers hdrs = { { "Cookie", "token=" + authentic_token } };
+        NullStreamBuf null_buf;
+        std::streambuf* orig_cout = std::cout.rdbuf(&null_buf);
+        struct CoutRestorer {
+            std::streambuf* prev;
+            ~CoutRestorer() { std::cout.rdbuf(prev); }
+        } restorer{ orig_cout };
 
-            // Establish connection before barrier so all 8 workers hit handlers concurrently
-            auto warmup = cli.Get("/test/page?guid=warmup&team=0", hdrs);
-            if (!warmup || warmup->status != 200)
-            {
-                ++failures;
-                std::lock_guard<std::mutex> lk(err_mutex);
-                if (err_samples.size() < 5)
-                    err_samples.push_back("warmup GET failed: err=" + std::to_string(static_cast<int>(warmup.error())));
-            }
+        std::thread server_thread([&]() { svr.listen_after_bind(); });
+        svr.wait_until_ready();
 
-            ready_count.fetch_add(1, std::memory_order_acq_rel);
-            while (!go.load(std::memory_order_acquire))
-                std::this_thread::yield();
+        // Match httplib's worker pool (8) with keep-alive connections so all workers stay busy
+        // concurrently without overflowing Winsock's default listen(backlog=5) on initial connect.
+        std::vector<std::thread> clients;
+        for (int w = 0; w < kWorkers; ++w)
+        {
+            clients.emplace_back([&, w]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(w * 10));
+                httplib::Client cli("127.0.0.1", port);
+                cli.set_keep_alive(true);
+                cli.set_connection_timeout(5, 0);
+                cli.set_read_timeout(5, 0);
+                httplib::Headers hdrs = { { "Cookie", "token=" + authentic_token } };
 
-            for (int k = 0; k < kPerWorker; ++k)
-            {
-                const int id = w * kPerWorker + k;
-                const std::string guid = "guid-" + std::to_string(id);
-                const std::string team = "team-" + std::to_string(id % 4);
-                const std::string score = std::to_string(1000 + id);
-
-                auto r1 = cli.Get(("/test/page?guid=" + guid + "&team=" + team).c_str(), hdrs);
-                if (!r1 || r1->status != 200)
+                // Establish connection before barrier so all 8 workers hit handlers concurrently
+                httplib::Result warmup(nullptr, httplib::Error::Connection);
+                for (int attempt = 0; attempt < 3; ++attempt)
+                {
+                    warmup = cli.Get("/test/page?guid=warmup&team=0", hdrs);
+                    if (warmup && warmup->status == 200)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                if (!warmup || warmup->status != 200)
                 {
                     ++failures;
                     std::lock_guard<std::mutex> lk(err_mutex);
                     if (err_samples.size() < 5)
-                        err_samples.push_back("GET failed id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r1.error())));
-                    continue;
-                }
-                if (r1->body.find("<title>BT_" + guid + "</title>") == std::string::npos ||
-                    r1->body.find("PAGE_PAYLOAD:" + guid + ":" + team) == std::string::npos)
-                {
-                    ++failures;
-                    std::lock_guard<std::mutex> lk(err_mutex);
-                    if (err_samples.size() < 5)
-                        err_samples.push_back("GET mismatch id=" + std::to_string(id));
+                        err_samples.push_back("warmup GET failed: err=" + std::to_string(static_cast<int>(warmup.error())));
                 }
 
-                auto r2 = cli.Post("/test/post", hdrs,
-                    "guid=" + guid + "&team=" + team + "&score=" + score,
-                    "application/x-www-form-urlencoded");
-                if (!r2 || r2->status != 200 ||
-                    r2->body != ("POST_PAYLOAD:" + guid + ":" + team + ":" + score))
+                ready_count.fetch_add(1, std::memory_order_acq_rel);
+                while (!go.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+
+                for (int k = 0; k < kPerWorker; ++k)
                 {
-                    ++failures;
-                    std::lock_guard<std::mutex> lk(err_mutex);
-                    if (err_samples.size() < 5)
-                        err_samples.push_back("POST failed/mismatch id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r2.error())));
+                    const int id = w * kPerWorker + k;
+                    const std::string guid = "guid-" + std::to_string(id);
+                    const std::string team = "team-" + std::to_string(id % 4);
+                    const std::string score = std::to_string(1000 + id);
+
+                    auto r1 = cli.Get(("/test/page?guid=" + guid + "&team=" + team).c_str(), hdrs);
+                    if (!r1 || r1->status != 200)
+                    {
+                        ++failures;
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        if (err_samples.size() < 5)
+                            err_samples.push_back("GET failed id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r1.error())));
+                        continue;
+                    }
+                    if (r1->body.find("<title>BT_" + guid + "</title>") == std::string::npos ||
+                        r1->body.find("PAGE_PAYLOAD:" + guid + ":" + team) == std::string::npos)
+                    {
+                        ++failures;
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        if (err_samples.size() < 5)
+                            err_samples.push_back("GET mismatch id=" + std::to_string(id));
+                    }
+
+                    auto r2 = cli.Post("/test/post", hdrs,
+                        "guid=" + guid + "&team=" + team + "&score=" + score,
+                        "application/x-www-form-urlencoded");
+                    if (!r2 || r2->status != 200 ||
+                        r2->body != ("POST_PAYLOAD:" + guid + ":" + team + ":" + score))
+                    {
+                        ++failures;
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        if (err_samples.size() < 5)
+                            err_samples.push_back("POST failed/mismatch id=" + std::to_string(id) + " err=" + std::to_string(static_cast<int>(r2.error())));
+                    }
                 }
-            }
-        });
+            });
+        }
+        while (ready_count.load(std::memory_order_acquire) < kWorkers)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        go.store(true, std::memory_order_release);
+        for (auto& t : clients) t.join();
+
+        svr.stop();
+        server_thread.join();
     }
-    while (ready_count.load(std::memory_order_acquire) < kWorkers)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    go.store(true, std::memory_order_release);
-    for (auto& t : clients) t.join();
 
-    std::cout.rdbuf(orig_cout);
-    std::cout << "[ConcurrentTest] clients joined, failures=" << failures.load() << std::endl;
-    svr.stop();
-    server_thread.join();
-    std::cout << "[ConcurrentTest] server stopped" << std::endl;
+    std::cout << "[ConcurrentTest] clients joined, server stopped, failures=" << failures.load() << std::endl;
 
     if (failures.load() > 0)
     {
