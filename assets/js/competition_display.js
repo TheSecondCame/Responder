@@ -116,53 +116,65 @@ var isConfirmPending = false;
 var isEndingCompetition = false;
 var sessionSyncChain = Promise.resolve();
 
+function submitEndCompetition(actionValue) {
+    isEndingCompetition = true;
+    $.ajax({
+        type: 'post',
+        url: "/main/competition/display/enddisplay?guid=" + encodeURIComponent(competition_guid) + "&action=" + actionValue,
+        async: true,
+        dataType: 'text',
+        data: '',
+        success: function (res) {
+            if (res != "success") {
+                isEndingCompetition = false;
+                notyf.error("尝试退出比赛时出现意外错误。");
+                return;
+            }
+            if (typeof exitFullscreen === 'function') {
+                exitFullscreen();
+            }
+            window.onbeforeunload = undefined;
+            window.location.href = "/main/competition/detail?guid=" + encodeURIComponent(competition_guid);
+        },
+        error: function () {
+            isEndingCompetition = false;
+            notyf.error("尝试退出比赛时出错。请检查网络连接并重试。");
+        }
+    });
+}
+
 function EndCompetition() {
     Swal.fire({
-        title: "退出当前正在进行的比赛？",
-        text: "退出当前正在进行的比赛会导致比赛中断。",
+        title: "退出比赛",
+        text: "请选择暂停比赛（保留进度以便稍后继续）或结束比赛。",
         icon: "warning",
+        showConfirmButton: true,
+        showDenyButton: true,
         showCancelButton: true,
-        confirmButtonText: "确定",
+        confirmButtonText: "暂停比赛",
+        denyButtonText: "结束比赛",
         cancelButtonText: "取消",
-    })
-        .then((willEnd) => {
-            if (willEnd.isConfirmed) {
-                exitFullscreen();
-                window.onbeforeunload = undefined;
-
-                Swal.fire({
-                    title: "退出比赛",
-                    text: "要结束比赛还是暂停比赛？",
-                    icon: "warning",
-                    showCancelButton: true,
-                    confirmButtonText: "结束",
-                    cancelButtonText: "暂停",
-                })
-                    .then((isFinished) => {
-                        var isFinished = isFinished.isConfirmed ? 1 : 0;
-                        isEndingCompetition = true;
-                        $.ajax({
-                            type: 'post',
-                            url: "/main/competition/display/enddisplay?guid=" + competition_guid + "&action=" + isFinished,
-                            async: true,
-                            dataType: 'text',
-                            data: '',
-                            success: function (res) {
-                                if (res != "success") {
-                                    isEndingCompetition = false;
-                                    notyf.error("尝试退出比赛时出现意外错误。");
-                                    return;
-                                }
-                                window.location.href = "/main/competition/detail?guid=" + competition_guid;
-                            },
-                            error: function (xhr, status, error) {
-                                isEndingCompetition = false;
-                                notyf.error("尝试退出比赛时出错。请检查网络连接并重试。");
-                            }
-                        });
-                    });
-            }
-        });
+    }).then((choice) => {
+        if (!choice) return;
+        if (choice.isConfirmed) {
+            submitEndCompetition(0);
+            return;
+        }
+        if (choice.isDenied) {
+            Swal.fire({
+                title: "确认结束比赛？",
+                text: "结束后将锁定当前比分并生成最终排名。",
+                icon: "warning",
+                showCancelButton: true,
+                confirmButtonText: "确认结束",
+                cancelButtonText: "返回",
+            }).then((confirmFinish) => {
+                if (confirmFinish && confirmFinish.isConfirmed) {
+                    submitEndCompetition(1);
+                }
+            });
+        }
+    });
 }
 window.onbeforeunload = function (e) {
     var e = window.event || e;

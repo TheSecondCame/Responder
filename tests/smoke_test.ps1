@@ -206,6 +206,11 @@ try {
     }
     $compGuid = $Matches[1]
 
+    $rStartComp = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/start?guid=$compGuid" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rStartComp.Content.Trim() -ne "success") {
+        throw "POST /main/competition/display/start failed: $($rStartComp.Content)"
+    }
+
     $rDisplayInit = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
     if ($rDisplayInit.StatusCode -ne 200 -or $rDisplayInit.Content -notmatch 'var has_initial_session = false;') {
         throw "Initial GET /main/competition/display did not report has_initial_session = false"
@@ -383,6 +388,26 @@ try {
         throw "Delayed sync after pause was not rejected or recreated session.json: $($rDelayedSyncPause.Content)"
     }
 
+    # Refreshing GET /display while PAUSED must NOT resurrect status to ONGOING
+    try {
+        $null = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
+        throw "Expected GET /display while PAUSED to return 409"
+    } catch {
+        if ([int]$_.Exception.Response.StatusCode -ne 409) {
+            throw "Expected HTTP 409 on GET /display while PAUSED, got: $($_.Exception.Message)"
+        }
+    }
+    $compJsonPath = Join-Path $staging "data\competitions\$compGuid\competition.json"
+    $compWhilePaused = Get-Content $compJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($compWhilePaused.competition_status -ne 2) {
+        throw "GET /display modified PAUSED status to $($compWhilePaused.competition_status)"
+    }
+
+    $rResume = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/resume?guid=$compGuid" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rResume.Content.Trim() -ne "success") {
+        throw "POST /main/competition/display/resume failed: $($rResume.Content)"
+    }
+
     $rDisplayResume = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
     if ($rDisplayResume.Content -notmatch 'var has_initial_session = false;' -or $rDisplayResume.Content -notmatch "var last_problem_id = $q3Id;") {
         throw "Resumed display page state unexpected after pause"
@@ -417,7 +442,6 @@ try {
         $raceClient.Dispose()
     }
 
-    $compJsonPath = Join-Path $staging "data\competitions\$compGuid\competition.json"
     $compAfterFinish = Get-Content $compJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($compAfterFinish.competition_status -ne 3 -or (Test-Path $sessionFilePath)) {
         throw "Finish did not persist FINISHED status or left session.json behind"
@@ -435,9 +459,12 @@ try {
     }
     $compGuid2 = $Matches[1]
 
-    # Put compGuid back to ONGOING (via display) and compGuid2 to ONGOING
-    $null = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid" -Headers $headers -UseBasicParsing
-    $null = Invoke-WebRequest -Uri "$baseUrl/main/competition/display?guid=$compGuid2" -Headers $headers -UseBasicParsing
+    # Put compGuid back to ONGOING (via resume) and compGuid2 to ONGOING (via start)
+    $rResume1 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/resume?guid=$compGuid" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    $rStart2 = Invoke-WebRequest -Uri "$baseUrl/main/competition/display/start?guid=$compGuid2" -Method Post -Headers $headers -Body "" -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    if ($rResume1.Content.Trim() -ne "success" -or $rStart2.Content.Trim() -ne "success") {
+        throw "Failed to resume/start competitions for concurrent test"
+    }
 
     $stressHandler = New-Object System.Net.Http.HttpClientHandler
     $stressHandler.UseCookies = $false

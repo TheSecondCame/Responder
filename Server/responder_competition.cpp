@@ -372,33 +372,123 @@ std::shared_ptr<std::mutex> get_competition_mutex(const std::string& guid)
 	return ptr;
 }
 
+namespace
+{
+	std::mutex g_comp_list_mutex;
+
+	bool try_parse_score_line(const std::string& raw, int& out)
+	{
+		size_t start = 0;
+		size_t end = raw.size();
+		while (start < end && (raw[start] == ' ' || raw[start] == '\t' || raw[start] == '\r'))
+			++start;
+		while (end > start && (raw[end - 1] == ' ' || raw[end - 1] == '\t' || raw[end - 1] == '\r'))
+			--end;
+		if (start == end)
+			return false;
+		const std::string trimmed = raw.substr(start, end - start);
+		try
+		{
+			size_t idx = 0;
+			int val = std::stoi(trimmed, &idx);
+			if (idx != trimmed.size())
+				return false;
+			out = val;
+			return true;
+		}
+		catch (...)
+		{
+			return false;
+		}
+	}
+}
+
+bool is_valid_competition_guid(const std::string& guid)
+{
+	if (guid.empty() || guid.size() > 128)
+		return false;
+	for (unsigned char ch : guid)
+	{
+		if (!((ch >= '0' && ch <= '9') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= 'a' && ch <= 'z') ||
+			ch == '-' || ch == '_'))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+const char* competition_status_name(competition::status s)
+{
+	switch (s)
+	{
+	case competition::NOT_STARTED: return "NOT_STARTED";
+	case competition::ONGOING: return "ONGOING";
+	case competition::PAUSED: return "PAUSED";
+	case competition::FINISHED: return "FINISHED";
+	default: return "UNKNOWN";
+	}
+}
+
 std::vector<std::string> load_competition_list(std::string filename)
 {
+	std::lock_guard<std::mutex> list_lock(g_comp_list_mutex);
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
 		std::cout << "Failed to load competition list from " << filename << std::endl;
-		// TODO: MessageBox
 		return std::vector<std::string>();
 	}
 
-	json jsbuf = json::parse(fin);
+	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
+	if (!jsbuf.is_object() || !jsbuf.contains("competitions") || !jsbuf["competitions"].is_array())
+	{
+		std::cout << "[WARN] Invalid competition list JSON in " << filename << std::endl;
+		return std::vector<std::string>();
+	}
 
 	std::vector<std::string> guid_list;
-	jsbuf["competitions"].get_to(guid_list);
+	for (const auto& item : jsbuf["competitions"])
+	{
+		if (item.is_string())
+			guid_list.push_back(item.get<std::string>());
+	}
 
 	return guid_list;
 }
 
 void save_competition_list(std::string filename, const std::vector<std::string>& guid_list)
 {
+	std::lock_guard<std::mutex> list_lock(g_comp_list_mutex);
+	CreateDirectoryA("data", NULL);
+	CreateDirectoryA("data/competitions", NULL);
+
 	json jsbuf;
 	jsbuf["competitions"] = guid_list;
-	
-	std::ofstream fout(filename);
-	fout << jsbuf.dump();
-	fout.close();
+
+	const std::string tmp = filename + ".tmp";
+	try
+	{
+		std::ofstream fout;
+		fout.exceptions(std::ios::badbit | std::ios::failbit);
+		fout.open(tmp, std::ios::binary | std::ios::trunc);
+		fout << jsbuf.dump();
+		fout.close();
+
+		if (!MoveFileExA(tmp.c_str(), filename.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+		{
+			std::cout << "[ERROR] Failed to replace competition list " << filename << std::endl;
+			DeleteFileA(tmp.c_str());
+		}
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "[ERROR] Failed to write competition list " << filename << ": " << e.what() << std::endl;
+		DeleteFileA(tmp.c_str());
+	}
 }
 
 void competition::load(std::string _guid)
@@ -409,45 +499,68 @@ void competition::load(std::string _guid)
 	last_problem_type = -1;
 	last_problem_id = 0;
 
+	if (!is_valid_competition_guid(guid))
+		return;
+
 	std::string filename = "data/competitions/" + guid + "/competition.json";
 
 	std::ifstream fin(filename);
 	if (fin.fail())
 	{
 		std::cout << "Failed to load competition from " << filename << std::endl;
-		// TODO: MessageBox
 		return;
 	}
 
 	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
 	if (!jsbuf.is_object())
+	{
+		std::cout << "[WARN] Invalid competition JSON in " << filename << std::endl;
 		return;
+	}
 
-	jsbuf["name"].get_to(name);
-	jsbuf["description"].get_to(description);
-	jsbuf["teams"].get_to(teams);
-	jsbuf["competition_status"].get_to(competition_status);
-	jsbuf["choice_count"].get_to(choice_count);
-	jsbuf["completion_count"].get_to(completion_count);
-	jsbuf["info_count"].get_to(info_count);
-	if (jsbuf.contains("last_problem_type") && jsbuf["last_problem_type"].is_number_integer())
-		last_problem_type = jsbuf["last_problem_type"].get<int>();
-	if (jsbuf.contains("last_problem_id") && jsbuf["last_problem_id"].is_number_integer())
-		last_problem_id = jsbuf["last_problem_id"].get<int>();
+	name = read_string(jsbuf, "name", "");
+	description = read_string(jsbuf, "description", "");
+	if (jsbuf.contains("teams") && jsbuf["teams"].is_array())
+		jsbuf["teams"].get_to(teams);
+	int raw_status = read_int(jsbuf, "competition_status", static_cast<int>(status::NOT_STARTED));
+	if (raw_status >= static_cast<int>(status::NOT_STARTED) && raw_status <= static_cast<int>(status::FINISHED))
+		competition_status = static_cast<status>(raw_status);
+	else
+		competition_status = status::NOT_STARTED;
+	choice_count = read_int(jsbuf, "choice_count", 0);
+	completion_count = read_int(jsbuf, "completion_count", 0);
+	info_count = read_int(jsbuf, "info_count", 0);
+	last_problem_type = read_int(jsbuf, "last_problem_type", -1);
+	last_problem_id = read_int(jsbuf, "last_problem_id", 0);
 
 	problems.load("data/competitions/" + guid + "/problems.json");
 
 	if (competition_status >= status::ONGOING)
 	{
-		fin.open("data/competitions/" + guid + "/scores.json");
+		const std::string scores_file = "data/competitions/" + guid + "/scores.json";
+		fin.open(scores_file);
 		if (!fin.fail())
 		{
-			int temp = 0;
-			for (int i = 1; i <= teams.size(); i++)
+			std::string line;
+			for (size_t i = 0; i < teams.size(); ++i)
 			{
-				fin >> temp;
-				team_scores.push_back(temp);
+				if (!std::getline(fin, line))
+				{
+					std::cout << "[WARN] Truncated scores.json for competition " << guid
+						<< " at team index " << i << "; defaulting remaining scores to 0." << std::endl;
+					while (team_scores.size() < teams.size())
+						team_scores.push_back(0);
+					break;
+				}
+				int parsed_score = 0;
+				if (!try_parse_score_line(line, parsed_score))
+				{
+					std::cout << "[WARN] Invalid score entry in " << scores_file
+						<< " at line " << (i + 1) << ": \"" << line << "\"; defaulting to 0." << std::endl;
+					parsed_score = 0;
+				}
+				team_scores.push_back(parsed_score);
 			}
 			fin.close();
 			return;
@@ -455,13 +568,13 @@ void competition::load(std::string _guid)
 		fin.close();
 	}
 
-	for (int i = 1; i <= teams.size(); i++)
+	for (size_t i = 0; i < teams.size(); ++i)
 		team_scores.push_back(0);
 }
 
 void competition::save()
 {
-	if (guid == "")
+	if (!is_valid_competition_guid(guid))
 		return;
 
 	CreateDirectoryA("data", NULL);
@@ -500,6 +613,40 @@ void competition::save()
 	catch (...)
 	{
 		DeleteFileA(tmp.c_str());
+	}
+}
+
+bool competition::save_scores() const
+{
+	if (!is_valid_competition_guid(guid))
+		return false;
+
+	CreateDirectoryA("data", NULL);
+	CreateDirectoryA("data/competitions", NULL);
+	CreateDirectoryA(("data/competitions/" + guid + "/").c_str(), NULL);
+
+	const std::string dst = "data/competitions/" + guid + "/scores.json";
+	const std::string tmp = dst + ".tmp";
+	try
+	{
+		std::ofstream fout;
+		fout.exceptions(std::ios::badbit | std::ios::failbit);
+		fout.open(tmp, std::ios::binary | std::ios::trunc);
+		for (int score : team_scores)
+			fout << score << '\n';
+		fout.close();
+
+		if (!MoveFileExA(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+		{
+			DeleteFileA(tmp.c_str());
+			return false;
+		}
+		return true;
+	}
+	catch (...)
+	{
+		DeleteFileA(tmp.c_str());
+		return false;
 	}
 }
 

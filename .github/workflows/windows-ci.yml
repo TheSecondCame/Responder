@@ -85,6 +85,7 @@ jobs:
             .\Server\responder_template.cpp `
             .\Server\responder_problem.cpp `
             .\Server\responder_competition.cpp `
+            .\Server\competition_pages.cpp `
             .\Server\functions.cpp `
             .\Server\logging.cpp `
             /Fo.\build_tests\ `

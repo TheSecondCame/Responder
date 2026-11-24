@@ -578,13 +578,11 @@ namespace
 		pl_unused.remove_used();
 	}
 
-	// 备份题库到 data/problems_backup/
+	// 原子备份题库到 data/problems_backup/
 	void BackupProblems()
 	{
-		RemoveDir(BACKUP_DIR);
-		CreateDirectoryA("data", NULL);
-		CreateDirectoryA(BACKUP_DIR, NULL);
-		CopyDir(PROBLEM_DIR, BACKUP_DIR);
+		if (!backup_problem_bank(PROBLEM_DIR, BACKUP_DIR))
+			throw std::runtime_error("备份题库失败，已保留原有备份。");
 	}
 
 	// Prepare both memory pools before publishing files. For new questions the
