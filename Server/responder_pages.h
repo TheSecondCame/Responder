@@ -120,6 +120,41 @@ protected:
 	std::string generate_response(const request_context& ctx) override;
 };
 
+class competition_start_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response(const request_context& ctx) override;
+};
+
+class competition_pause_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response(const request_context& ctx) override;
+};
+
+class competition_resume_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response(const request_context& ctx) override;
+};
+
+class competition_finish_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response(const request_context& ctx) override;
+};
+
+class competition_copy_handler : public responder_post_request
+{
+protected:
+	void init() override;
+	std::string generate_response(const request_context& ctx) override;
+};
+
 // ===== 题库管理（原 Problems Generator 的 Web 化）=====
 
 class problem_manage_page : public responder_page

@@ -6,8 +6,10 @@
 #include "responder_pages.h"
 #include "responder_problem.h"
 #include "responder_competition.h"
+#include "responder_template.h"
 #include "functions.h"
 #include "build.h"
+#include <algorithm>
 #include <ctime>
 
 extern problem_list pl;
@@ -15,6 +17,25 @@ extern problem_list pl_unused;
 
 namespace
 {
+	std::string html_escape(const std::string& s)
+	{
+		std::string out;
+		out.reserve(s.size());
+		for (char c : s)
+		{
+			switch (c)
+			{
+			case '&': out += "&amp;"; break;
+			case '<': out += "&lt;"; break;
+			case '>': out += "&gt;"; break;
+			case '"': out += "&quot;"; break;
+			case '\'': out += "&#39;"; break;
+			default: out += c; break;
+			}
+		}
+		return out;
+	}
+
 	std::string safe_json_for_script(const json& j)
 	{
 		std::string s = j.dump();
@@ -37,6 +58,8 @@ namespace
 
 	bool try_parse_int(const std::string& s, int& out)
 	{
+		if (s.empty())
+			return false;
 		try
 		{
 			size_t idx = 0;
@@ -50,6 +73,120 @@ namespace
 		{
 			return false;
 		}
+	}
+
+	bool parse_int_in_range(const request_context& ctx, const std::string& key, int min_val, int max_val, int& out)
+	{
+		if (!ctx.has_param(key))
+			return false;
+		int val = 0;
+		if (!try_parse_int(ctx.get_param(key), val))
+			return false;
+		if (val < min_val || val > max_val)
+			return false;
+		out = val;
+		return true;
+	}
+
+	std::string build_error_body(const std::string& title, const std::string& detail,
+		const std::string& back_href, const std::string& back_label)
+	{
+		return R"(
+<div class="console-card">
+  <div class="alert alert-danger d-flex align-items-start gap-3 mb-4" role="alert">
+    <i class="bi bi-exclamation-octagon-fill fs-4"></i>
+    <div>
+      <h4 class="alert-heading mb-1">)" + html_escape(title) + R"(</h4>
+      <p class="mb-0">)" + html_escape(detail) + R"(</p>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-primary" href=")" + html_escape(back_href) + R"("><i class="bi bi-arrow-left"></i> )" + html_escape(back_label) + R"(</a>
+    <a class="btn btn-outline-primary" href="/main">返回主页</a>
+  </div>
+</div>
+)";
+	}
+
+	void render_error(page_context& page, const std::string& title, const std::string& detail,
+		int status_code = 400, const std::string& back_href = "/main", const std::string& back_label = "返回主页")
+	{
+		page.status_code = status_code;
+		page.is_index_page = true;
+		page.is_full_custom = false;
+		page.browser_title = title + " - Responder";
+		page.page_title = html_escape(title);
+		page.breadcrumb = R"(<li><a href="/main">主页</a></li><li>错误提示</li>)";
+		page.content = build_error_body(title, detail, back_href, back_label);
+	}
+
+	std::string render_error_page_html(const std::string& title, const std::string& detail,
+		const std::string& back_href = "/main", const std::string& back_label = "返回主页")
+	{
+		return output_html_code(
+			title + " - Responder",
+			R"(<li><a href="/main">主页</a></li><li>错误提示</li>)",
+			html_escape(title),
+			build_error_body(title, detail, back_href, back_label),
+			true,
+			true);
+	}
+
+	const char* competition_status_label(competition::status s)
+	{
+		switch (s)
+		{
+		case competition::NOT_STARTED: return "未开赛";
+		case competition::ONGOING: return "进行中";
+		case competition::PAUSED: return "暂停中";
+		case competition::FINISHED: return "已结束";
+		default: return "未知状态";
+		}
+	}
+
+	template <typename T>
+	size_t find_problem_entry_index(const std::vector<std::pair<T, int>>& list, int id)
+	{
+		if (id >= 1 && static_cast<size_t>(id) <= list.size() && list[id - 1].first.id == id)
+			return static_cast<size_t>(id - 1);
+		for (size_t i = 0; i < list.size(); ++i)
+		{
+			if (list[i].first.id == id)
+				return i;
+		}
+		return std::string::npos;
+	}
+
+	template <typename T>
+	size_t restore_problem_group(std::vector<std::pair<T, int>>& bank_list, const std::vector<std::pair<T, int>>& used_list)
+	{
+		size_t restored = 0;
+		for (const auto& used : used_list)
+		{
+			size_t idx = find_problem_entry_index(bank_list, used.first.id);
+			if (idx != std::string::npos && bank_list[idx].second != 0)
+			{
+				bank_list[idx].second = 0;
+				++restored;
+			}
+		}
+		return restored;
+	}
+
+	// Must be called while holding problem_bank_mutex.
+	size_t return_problems_to_bank_unlocked(const problem_list& used_problems)
+	{
+		size_t restored = 0;
+		restored += restore_problem_group(pl.choice_problems, used_problems.choice_problems);
+		restored += restore_problem_group(pl.completion_problems, used_problems.completion_problems);
+		restored += restore_problem_group(pl.info_problems, used_problems.info_problems);
+		if (restored > 0)
+		{
+			pl_unused = pl;
+			pl_unused.remove_used();
+			pl.save("data/problems/problem_list.json");
+		}
+		return restored;
 	}
 
 	std::string render_problem_html(int type, int id, const std::string& p_content, const std::string p_info[5], const std::string& p_ans)
@@ -71,13 +208,9 @@ namespace
 	template <typename T>
 	const T* find_problem_by_id(const std::vector<std::pair<T, int>>& list, int id)
 	{
-		if (id >= 1 && static_cast<size_t>(id) <= list.size() && list[id - 1].first.id == id)
-			return &list[id - 1].first;
-		for (const auto& item : list)
-		{
-			if (item.first.id == id)
-				return &item.first;
-		}
+		size_t idx = find_problem_entry_index(list, id);
+		if (idx != std::string::npos)
+			return &list[idx].first;
 		return nullptr;
 	}
 
@@ -315,17 +448,34 @@ std::string new_competition_handler::generate_response(const request_context& ct
         if (param.first.substr(0, 8) == "teamName")
             teamCount++;
 
+    const std::string name = ctx.get_param("name");
+    int choice_count = 0, completion_count = 0, info_count = 0;
+    if (name.empty() || teamCount < 2 || teamCount > 4
+        || !parse_int_in_range(ctx, "choiceCount", 0, 100000, choice_count)
+        || !parse_int_in_range(ctx, "completionCount", 0, 100000, completion_count)
+        || !parse_int_in_range(ctx, "infoCount", 0, 100000, info_count))
+    {
+        std::cout << "[WARN] Rejected new competition submission: invalid parameters (name=\"" << name
+            << "\", teamCount=" << teamCount << ")" << std::endl;
+        return render_error_page_html("创建比赛失败", "比赛名称、参赛队伍数量（2–4 队）或题目数量参数无效，请返回重试。", "/main/competition/new", "返回新建比赛");
+    }
+
     competition c;
 	c.guid = competition::generate_guid();
-    c.name = ctx.get_param("name");
+    c.name = name;
 	c.description = ctx.get_param("description");
-	c.choice_count = std::stoi(ctx.get_param("choiceCount"));
-	c.completion_count = std::stoi(ctx.get_param("completionCount"));
-	c.info_count = std::stoi(ctx.get_param("infoCount"));
+	c.choice_count = choice_count;
+	c.completion_count = completion_count;
+	c.info_count = info_count;
 	c.competition_status = competition::NOT_STARTED;
 	for (int i = 1; i <= teamCount; i++)
     {
         std::string teamName = ctx.get_param("teamName" + std::to_string(i));
+        if (teamName.empty())
+        {
+            std::cout << "[WARN] Rejected new competition submission: empty teamName" << i << std::endl;
+            return render_error_page_html("创建比赛失败", "参赛队伍名称不能为空，请返回检查后重试。", "/main/competition/new", "返回新建比赛");
+        }
         char key = 64 + i; // 从 A 开始绑定按键
         c.teams.push_back(std::make_pair(teamName, key));
     }
@@ -334,6 +484,9 @@ std::string new_competition_handler::generate_response(const request_context& ct
     auto comlist = load_competition_list("data/competitions/list.json");
 	comlist.push_back(c.guid);
 	save_competition_list("data/competitions/list.json", comlist);
+
+    std::cout << "Created competition: guid=" << c.guid << " (" << c.name << "), status="
+        << competition_status_name(c.competition_status) << std::endl;
 
     return R"(
 <script> window.location.href = "/main/competition/detail?guid=)" + c.guid + R"("; </script>
@@ -351,22 +504,34 @@ void competition_edit_page::generate_page(const request_context& ctx, page_conte
 	std::lock_guard bank_lock(problem_bank_mutex);
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/edit missing guid" << std::endl;
+        render_error(page, "缺少比赛 ID", "请求缺少 guid 参数，无法打开编辑页面。", 400);
         return;
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] GET /main/competition/edit invalid guid: " << guid << std::endl;
+        render_error(page, "无效的比赛 ID", "比赛 ID 格式不合法。", 400);
+        return;
+    }
 
     competition c;
     c.load(guid);
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/edit competition not found: guid=" << guid << std::endl;
+        render_error(page, "比赛不存在", "找不到对应的比赛记录（guid=" + guid + "）。", 404);
         return;
 	}
 	if (c.competition_status != competition::status::NOT_STARTED)
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/edit blocked for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        render_error(page, "当前状态不允许编辑",
+            std::string("比赛处于「") + competition_status_label(c.competition_status) + "」状态，仅「未开赛」的比赛可以编辑。",
+            409, "/main/competition/detail?guid=" + guid, "返回比赛详情");
         return;
     }
 
@@ -562,43 +727,73 @@ std::string competition_edit_handler::generate_response(const request_context& c
 {
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/edit missing guid" << std::endl;
+        return render_error_page_html("缺少比赛 ID", "请求缺少 guid 参数，无法保存修改。");
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/edit invalid guid: " << guid << std::endl;
+        return render_error_page_html("无效的比赛 ID", "比赛 ID 格式不合法。");
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
     competition c;
     c.load(guid);
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/edit competition not found: guid=" << guid << std::endl;
+        return render_error_page_html("比赛不存在", "找不到对应的比赛记录（guid=" + guid + "）。");
     }
     if (c.competition_status != competition::status::NOT_STARTED)
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/edit blocked for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        return render_error_page_html("当前状态不允许编辑",
+            std::string("比赛处于「") + competition_status_label(c.competition_status) + "」状态，仅「未开赛」的比赛可以编辑。",
+            "/main/competition/detail?guid=" + guid, "返回比赛详情");
     }
-
-    c.teams.clear();
 
     int teamCount = 0;
     for (const auto& param : ctx.params)
         if (param.first.substr(0, 8) == "teamName")
             teamCount++;
 
-    c.name = ctx.get_param("name");
-    c.description = ctx.get_param("description");
-    c.choice_count = std::stoi(ctx.get_param("choiceCount"));
-    c.completion_count = std::stoi(ctx.get_param("completionCount"));
-    c.info_count = std::stoi(ctx.get_param("infoCount"));
+    const std::string name = ctx.get_param("name");
+    int choice_count = 0, completion_count = 0, info_count = 0;
+    if (name.empty() || teamCount < 2 || teamCount > 4
+        || !parse_int_in_range(ctx, "choiceCount", 0, 100000, choice_count)
+        || !parse_int_in_range(ctx, "completionCount", 0, 100000, completion_count)
+        || !parse_int_in_range(ctx, "infoCount", 0, 100000, info_count))
+    {
+        std::cout << "[WARN] POST /main/competition/edit invalid params: guid=" << guid << std::endl;
+        return render_error_page_html("保存修改失败", "比赛名称、参赛队伍数量（2–4 队）或题目数量参数无效，请返回重试。",
+            "/main/competition/edit?guid=" + guid, "返回编辑比赛");
+    }
+
+    std::vector<std::pair<std::string, char>> next_teams;
     for (int i = 1; i <= teamCount; i++)
     {
         std::string teamName = ctx.get_param("teamName" + std::to_string(i));
+        if (teamName.empty())
+        {
+            std::cout << "[WARN] POST /main/competition/edit empty teamName" << i << ": guid=" << guid << std::endl;
+            return render_error_page_html("保存修改失败", "参赛队伍名称不能为空。",
+                "/main/competition/edit?guid=" + guid, "返回编辑比赛");
+        }
         char key = 64 + i; // 从 A 开始绑定按键
-        c.teams.push_back(std::make_pair(teamName, key));
+        next_teams.push_back(std::make_pair(teamName, key));
     }
+
+    c.name = name;
+    c.description = ctx.get_param("description");
+    c.choice_count = choice_count;
+    c.completion_count = completion_count;
+    c.info_count = info_count;
+    c.teams = std::move(next_teams);
     c.save();
 
     return R"(
@@ -616,11 +811,17 @@ std::string competition_delete_handler::generate_response(const request_context&
 {
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/delete missing guid" << std::endl;
+        return "fail : guid not found";
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/delete invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
 
+    std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
     auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
 
@@ -629,13 +830,36 @@ std::string competition_delete_handler::generate_response(const request_context&
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/delete competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
     }
     if (c.competition_status == competition::status::ONGOING)
     {
-        // error: TODO
-        return "";
+        std::cout << "[WARN] POST /main/competition/delete rejected for ongoing competition: guid=" << guid << std::endl;
+        return "fail : competition is ongoing";
+    }
+
+    bool return_problems = true;
+    if (ctx.has_param("return_problems"))
+    {
+        const std::string rp = ctx.get_param("return_problems");
+        if (rp == "0" || rp == "false" || rp == "False")
+            return_problems = false;
+    }
+
+    size_t restored_count = 0;
+    if (return_problems)
+    {
+        try
+        {
+            restored_count = return_problems_to_bank_unlocked(c.problems);
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "[ERROR] Failed to return problems to bank while deleting competition guid="
+                << guid << ": " << e.what() << std::endl;
+            return "fail : failed to return problems";
+        }
     }
 
     competition_session::clear(c.guid);
@@ -651,6 +875,9 @@ std::string competition_delete_handler::generate_response(const request_context&
         }
 	}
 	save_competition_list("data/competitions/list.json", comlist);
+
+    std::cout << "Deleted competition: guid=" << c.guid << " (" << c.name << "), return_problems="
+        << (return_problems ? "true" : "false") << ", restored_count=" << restored_count << std::endl;
 
     return "Yes";
 }
@@ -693,17 +920,25 @@ void competition_detail_page::generate_page(const request_context& ctx, page_con
 	std::lock_guard bank_lock(problem_bank_mutex);
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/detail missing guid" << std::endl;
+        render_error(page, "缺少比赛 ID", "请求缺少 guid 参数，无法查看比赛详情。", 400);
         return;
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] GET /main/competition/detail invalid guid: " << guid << std::endl;
+        render_error(page, "无效的比赛 ID", "比赛 ID 格式不合法。", 400);
+        return;
+    }
 
     competition c;
     c.load(guid);
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/detail competition not found: guid=" << guid << std::endl;
+        render_error(page, "比赛不存在", "找不到对应的比赛记录（guid=" + guid + "）。", 404);
         return;
     }
 
@@ -760,6 +995,11 @@ void competition_detail_page::generate_page(const request_context& ctx, page_con
 )";
     }
 
+    const size_t drawn_choice = c.problems.choice_problems.size();
+    const size_t drawn_completion = c.problems.completion_problems.size();
+    const size_t drawn_info = c.problems.info_problems.size();
+    const size_t drawn_total = drawn_choice + drawn_completion + drawn_info;
+
     problems = R"(
 				<table class="table table-hover">
           		<thead><tr>
@@ -771,23 +1011,56 @@ void competition_detail_page::generate_page(const request_context& ctx, page_con
           		<tr>
             	  <td>选择题</td>
             	  <td class="tabular-nums">)" + std::to_string(c.choice_count) + R"(</td>
-            	  <td class="tabular-nums">)" + std::to_string(c.problems.choice_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(drawn_choice) + R"(</td>
             	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.choice_problems)) + R"(</td>
           		</tr>
 				<tr>
             	  <td>填空题</td>
             	  <td class="tabular-nums">)" + std::to_string(c.completion_count) + R"(</td>
-            	  <td class="tabular-nums">)" + std::to_string(c.problems.completion_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(drawn_completion) + R"(</td>
             	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.completion_problems)) + R"(</td>
           		</tr>
 				<tr>
             	  <td>信息题</td>
             	  <td class="tabular-nums">)" + std::to_string(c.info_count) + R"(</td>
-            	  <td class="tabular-nums">)" + std::to_string(c.problems.info_problems.size()) + R"(</td>
+            	  <td class="tabular-nums">)" + std::to_string(drawn_info) + R"(</td>
             	  <td class="tabular-nums">)" + std::to_string(problem_list::count_unused(pl.info_problems)) + R"(</td>
           		</tr>
         		</tbody></table>
 )";
+
+    std::string primary_actions;
+    if (c.competition_status == competition::status::NOT_STARTED)
+    {
+        primary_actions = R"(
+				<button class="btn btn-success" type="button" onclick="StartCompetition();"><i class="bi bi-play-fill"></i> 开始比赛</button>
+				<button class="btn btn-outline-primary" type="button" onclick="window.location.href='/main/competition/edit?guid=)" + guid + R"('"><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#deleteCompetitionModal"><i class="bi bi-trash"></i> 删除</button>)";
+    }
+    else if (c.competition_status == competition::status::ONGOING)
+    {
+        primary_actions = R"(
+				<button class="btn btn-success" type="button" onclick="window.location.href='/main/competition/display?guid=)" + guid + R"('"><i class="bi bi-display"></i> 进入比赛大屏</button>
+				<button class="btn btn-outline-warning" type="button" onclick="PauseCompetition();"><i class="bi bi-pause-fill"></i> 暂停比赛</button>
+				<button class="btn btn-outline-primary" type="button" disabled="disabled"><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-outline-danger" type="button" disabled="disabled"><i class="bi bi-trash"></i> 删除</button>)";
+    }
+    else if (c.competition_status == competition::status::PAUSED)
+    {
+        primary_actions = R"(
+				<button class="btn btn-success" type="button" onclick="ResumeCompetition('ongoing', true);"><i class="bi bi-play-fill"></i> 继续比赛</button>
+				<button class="btn btn-outline-danger" type="button" onclick="FinishCompetition();"><i class="bi bi-stop-fill"></i> 结束比赛</button>
+				<button class="btn btn-outline-primary" type="button" disabled="disabled"><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#deleteCompetitionModal"><i class="bi bi-trash"></i> 删除</button>)";
+    }
+    else
+    {
+        primary_actions = R"(
+				<button class="btn btn-warning" type="button" data-bs-toggle="modal" data-bs-target="#restoreCompetitionModal"><i class="bi bi-arrow-counterclockwise"></i> 恢复比赛</button>
+				<button class="btn btn-outline-primary" type="button" onclick="CopyCompetition();"><i class="bi bi-copy"></i> 复制为新比赛</button>
+				<button class="btn btn-outline-primary" type="button" disabled="disabled"><i class="bi bi-pencil"></i> 编辑</button>
+				<button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#deleteCompetitionModal"><i class="bi bi-trash"></i> 删除</button>)";
+    }
 
     page.content = R"(
         <div class="row g-4">
@@ -847,10 +1120,7 @@ void competition_detail_page::generate_page(const request_context& ctx, page_con
           <div class="col-lg-4 d-flex flex-column gap-4">
             <div class="portfolio-info">
               <h3>操作</h3>
-              <div class="d-flex flex-wrap gap-2">
-				<button class="btn btn-success" type="button" onclick="window.location.href='/main/competition/display?guid=)" + guid + R"('" )" + ((c.competition_status == competition::status::NOT_STARTED || c.competition_status == competition::status::PAUSED) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-display"></i> 进入比赛大屏</button>
-				<button class="btn btn-outline-primary" type="button" onclick="window.location.href='/main/competition/edit?guid=)" + guid + R"('" )" + ((c.competition_status != competition::status::NOT_STARTED) ? " disabled=\"disabled\"" : "") + R"(><i class="bi bi-pencil"></i> 编辑</button>
-				<button class="btn btn-outline-danger" type="button" onclick="Delete();" )" + ((c.competition_status != competition::status::ONGOING) ? "" : " disabled=\"disabled\"") + R"(><i class="bi bi-trash"></i> 删除</button>
+              <div class="d-flex flex-wrap gap-2">)" + primary_actions + R"(
               </div>
             </div>
 			<div class="portfolio-info">
@@ -861,29 +1131,163 @@ void competition_detail_page::generate_page(const request_context& ctx, page_con
 
         </div>
 
+        <div class="modal fade" id="deleteCompetitionModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title text-danger"><i class="bi bi-exclamation-triangle-fill"></i> 删除比赛</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <p>确实要删除比赛 <strong>)" + html_escape(c.name) + R"(</strong> 吗？此操作不可逆。</p>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="returnProblemsCheck" checked>
+                  <label class="form-check-label" for="returnProblemsCheck">
+                    将本场比赛已抽取的题目归还题池（共 )" + std::to_string(drawn_total) + R"( 题：选择 )" + std::to_string(drawn_choice) + R"( / 填空 )" + std::to_string(drawn_completion) + R"( / 信息 )" + std::to_string(drawn_info) + R"(）
+                  </label>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-danger" onclick="DeleteCompetition();">确认删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal fade" id="restoreCompetitionModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise"></i> 恢复已结束的比赛</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <p class="mb-2">比赛 <strong>)" + html_escape(c.name) + R"(</strong> 当前处于「已结束」状态。如果是误操作结束，可将其恢复：</p>
+                <ul class="text-secondary small mb-0">
+                  <li><strong>恢复为暂停</strong>：解除结束锁定并回到「暂停中」，可随后随时继续比赛。</li>
+                  <li><strong>直接恢复进行</strong>：立即恢复为「进行中」并打开比赛大屏。</li>
+                </ul>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-warning" onclick="ConfirmRestoreCompetition('paused', false);">恢复为暂停</button>
+                <button type="button" class="btn btn-success" onclick="ConfirmRestoreCompetition('ongoing', true);">恢复并进入大屏</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
 <script>
-    function Delete(){
-        swal({
-          title: "删除比赛",
-          text: "确实要删除 )" + c.name + R"( 吗？此操作不可逆！",
-          icon: "warning",
-          buttons: true,
-          dangerMode: true,
-          buttons: ["取消", "确定"],
-        })
-        .then((Delete) => {
-          if (Delete) {
-            $.ajax({
-                type:'post', 
-                url:'/main/competition/delete?guid=)" + c.guid + R"(',
-                async:false,
-                dataType:'text',
-                data:'',
-                success:function(res) {
-                    window.location.href = "/main";
+    var detailGuid = )" + safe_json_for_script(json(c.guid)) + R"(;
+    var detailName = )" + safe_json_for_script(json(c.name)) + R"(;
+
+    function postCompetitionAction(url, onSuccess) {
+        $.ajax({
+            type: 'post',
+            url: url,
+            dataType: 'text',
+            data: '',
+            success: function(res) {
+                if (res === "success" || res === "Yes" || res.indexOf("success:") === 0) {
+                    onSuccess(res);
+                } else {
+                    swal({ title: "操作失败", text: res || "服务器返回未知错误", icon: "error" });
                 }
-            })
-          }
+            },
+            error: function() {
+                swal({ title: "网络错误", text: "请求失败，请检查网络连接。", icon: "error" });
+            }
+        });
+    }
+
+    function StartCompetition() {
+        postCompetitionAction('/main/competition/display/start?guid=' + encodeURIComponent(detailGuid), function() {
+            window.location.href = '/main/competition/display?guid=' + encodeURIComponent(detailGuid);
+        });
+    }
+
+    function PauseCompetition() {
+        swal({
+            title: "暂停比赛",
+            text: "确定要将比赛「" + detailName + "」设为暂停中吗？",
+            icon: "warning",
+            buttons: ["取消", "确定暂停"]
+        }).then(function(ok) {
+            if (ok) {
+                postCompetitionAction('/main/competition/display/pause?guid=' + encodeURIComponent(detailGuid), function() {
+                    window.location.reload();
+                });
+            }
+        });
+    }
+
+    function ResumeCompetition(target, openDisplay) {
+        postCompetitionAction('/main/competition/display/resume?guid=' + encodeURIComponent(detailGuid) + '&target=' + encodeURIComponent(target || 'ongoing'), function() {
+            if (openDisplay) {
+                window.location.href = '/main/competition/display?guid=' + encodeURIComponent(detailGuid);
+            } else {
+                window.location.reload();
+            }
+        });
+    }
+
+    function ConfirmRestoreCompetition(target, openDisplay) {
+        swal({
+            title: "确认恢复比赛？",
+            text: "即将把已结束的比赛「" + detailName + "」恢复为" + (target === 'paused' ? "「暂停中」" : "「进行中」并进入大屏") + "。",
+            icon: "warning",
+            buttons: ["取消", "确认恢复"]
+        }).then(function(ok) {
+            if (ok) {
+                ResumeCompetition(target, openDisplay);
+            }
+        });
+    }
+
+    function FinishCompetition() {
+        swal({
+            title: "结束比赛",
+            text: "确定要结束比赛「" + detailName + "」并生成最终排名吗？",
+            icon: "warning",
+            dangerMode: true,
+            buttons: ["取消", "下一步"]
+        }).then(function(step1) {
+            if (!step1) return;
+            swal({
+                title: "再次确认结束比赛？",
+                text: "结束后比赛将锁定比分；如误操作可在详情页点击「恢复比赛」。",
+                icon: "warning",
+                dangerMode: true,
+                buttons: ["返回", "确认结束"]
+            }).then(function(step2) {
+                if (!step2) return;
+                postCompetitionAction('/main/competition/display/finish?guid=' + encodeURIComponent(detailGuid), function() {
+                    window.location.reload();
+                });
+            });
+        });
+    }
+
+    function CopyCompetition() {
+        swal({
+            title: "复制为新比赛",
+            text: "将按「" + detailName + "」的队伍与题量配置创建一个新的未开赛比赛（分数与已抽题目将重置）。",
+            icon: "info",
+            buttons: ["取消", "确定复制"]
+        }).then(function(ok) {
+            if (!ok) return;
+            postCompetitionAction('/main/competition/copy?guid=' + encodeURIComponent(detailGuid), function(res) {
+                var newGuid = res.substring("success:".length);
+                window.location.href = '/main/competition/detail?guid=' + encodeURIComponent(newGuid);
+            });
+        });
+    }
+
+    function DeleteCompetition() {
+        var returnProblems = document.getElementById('returnProblemsCheck').checked ? '1' : '0';
+        postCompetitionAction('/main/competition/delete?guid=' + encodeURIComponent(detailGuid) + '&return_problems=' + returnProblems, function() {
+            window.location.href = "/main";
         });
     }
 </script>
@@ -901,10 +1305,17 @@ void competition_display_page::generate_page(const request_context& ctx, page_co
 {
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] GET /main/competition/display missing guid" << std::endl;
+        render_error(page, "缺少比赛 ID", "请求缺少 guid 参数，无法打开比赛大屏。", 400);
         return;
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] GET /main/competition/display invalid guid: " << guid << std::endl;
+        render_error(page, "无效的比赛 ID", "比赛 ID 格式不合法。", 400);
+        return;
+    }
 
     competition c;
     competition_session session;
@@ -919,12 +1330,20 @@ void competition_display_page::generate_page(const request_context& ctx, page_co
 
         if (c.teams.size() == 0)
         {
-            // error: TODO
+            std::cout << "[WARN] GET /main/competition/display competition not found: guid=" << guid << std::endl;
+            render_error(page, "比赛不存在", "找不到对应的比赛记录（guid=" + guid + "）。", 404);
             return;
         }
 
-        c.competition_status = competition::ONGOING;
-        c.save();
+        if (c.competition_status != competition::ONGOING)
+        {
+            std::cout << "[WARN] GET /main/competition/display blocked for non-ongoing status="
+                << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+            render_error(page, "当前状态无法直接进入大屏",
+                std::string("比赛处于「") + competition_status_label(c.competition_status) + "」状态。为防止误改状态，大屏页面不会自动开始或恢复比赛，请返回比赛详情页操作。",
+                409, "/main/competition/detail?guid=" + guid, "返回比赛详情");
+            return;
+        }
 
         has_session = session.load(c.guid, c.teams.size());
         if (has_session && session.current_id > 0 && session.current_type >= 0 && session.current_type <= 2)
@@ -1229,36 +1648,20 @@ void competition_display_page::generate_page(const request_context& ctx, page_co
   </div>
 
   <script>
-    var competition_guid = ")" + c.guid + R"(";
+    var competition_guid = )" + safe_json_for_script(json(c.guid)) + R"(;
     var Teams = )";
 
-    std::string TeamsInfo;
-	TeamsInfo = "[";
-	for (auto& team : c.teams)
-		TeamsInfo += "\"" + team.first + "\",";
-	TeamsInfo[TeamsInfo.size() - 1] = ']';
-    TeamsInfo += ";";
+    json teams_json = json::array();
+    for (const auto& team : c.teams)
+        teams_json.push_back(team.first);
+    json keys_json = json::array();
+    for (size_t i = 0; i < c.teams.size(); ++i)
+        keys_json.push_back(static_cast<int>(i));
 
-    page.content += TeamsInfo + R"(
-    var scores = )";
-
-    TeamsInfo = "[";
-    for (auto& team : c.team_scores)
-        TeamsInfo += std::to_string(team) + ",";
-    TeamsInfo[TeamsInfo.size() - 1] = ']';
-    TeamsInfo += ";";
-
-    page.content += TeamsInfo + R"(
-    var team_keys = )";
-
-    TeamsInfo = "[";
-    for (int i = 0; i < c.teams.size(); i++)
-        TeamsInfo += std::to_string(i) + ",";
-    TeamsInfo[TeamsInfo.size() - 1] = ']';
-    TeamsInfo += ";";
-
-    page.content += TeamsInfo + R"(
-    var has_initial_session = )" + std::string(has_session ? "true" : "false") + R"(;
+    page.content += safe_json_for_script(teams_json) + ";\n";
+    page.content += "    var scores = " + safe_json_for_script(json(c.team_scores)) + ";\n";
+    page.content += "    var team_keys = " + safe_json_for_script(keys_json) + ";\n";
+    page.content += R"(    var has_initial_session = )" + std::string(has_session ? "true" : "false") + R"(;
     var initial_session = )" + safe_json_for_script(session.to_json()) + R"(;
     var server_now = )" + std::to_string(server_now) + R"(;
     var initial_problem_html = )" + safe_json_for_script(json(initial_problem_html)) + R"(;
@@ -1289,10 +1692,15 @@ std::string competition_display_scores_handler::generate_response(const request_
 {
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/scores missing guid" << std::endl;
         return "fail : guid not found";
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/scores invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
 
     auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
@@ -1302,43 +1710,40 @@ std::string competition_display_scores_handler::generate_response(const request_
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/scores competition not found: guid=" << guid << std::endl;
         return "fail : guid not existed";
     }
 
     if (c.competition_status != competition::status::ONGOING)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/scores rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
         return "fail : competition isn't ongoing";
     }
 
     if (!ctx.has_param("team") || !ctx.has_param("score"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/scores missing team or score: guid=" << guid << std::endl;
         return "fail : team or score not found";
     }
 
     int team_idx = -1;
     int new_score = 0;
-    if (!try_parse_int(ctx.get_param("team"), team_idx) || team_idx < 0 || static_cast<size_t>(team_idx) >= c.team_scores.size()
-        || !try_parse_int(ctx.get_param("score"), new_score))
+    if (!parse_int_in_range(ctx, "team", 0, static_cast<int>(c.team_scores.size()) - 1, team_idx)
+        || !parse_int_in_range(ctx, "score", -10000, 10000, new_score))
     {
+        std::cout << "[WARN] POST /main/competition/display/scores out-of-range or invalid params: guid="
+            << guid << ", team=" << ctx.get_param("team") << ", score=" << ctx.get_param("score") << std::endl;
         return "fail : invalid team or score";
     }
 
 	c.team_scores[team_idx] = new_score;
 
-	std::ofstream fout("data/competitions/" + c.guid + "/scores.json");
-
-	if (fout.fail())
+	if (!c.save_scores())
     {
-        // error: TODO
+        std::cout << "[ERROR] POST /main/competition/display/scores failed to write scores.json: guid=" << guid << std::endl;
         return "fail : can't write scores.json";
     }
-
-	for (auto score : c.team_scores)
-        fout << score << std::endl;
-    fout.close();
 
     return "success";
 }
@@ -1354,10 +1759,15 @@ std::string competition_display_problem_handler::generate_response(const request
 	std::lock_guard<std::mutex> bank_lock(problem_bank_mutex);
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/problem missing guid" << std::endl;
         return "fail : guid not found";
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/problem invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
 
     auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
@@ -1367,13 +1777,14 @@ std::string competition_display_problem_handler::generate_response(const request
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/problem competition not found: guid=" << guid << std::endl;
         return "fail : guid not existed";
     }
 
     if (c.competition_status != competition::status::ONGOING)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/problem rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
         return "fail : competition isn't ongoing";
     }
 
@@ -1406,7 +1817,10 @@ std::string competition_display_problem_handler::generate_response(const request
 
         std::string reshow_html;
         if (!lookup_and_render_problem(target_type, target_id, reshow_html))
+        {
+            std::cout << "[WARN] POST /main/competition/display/problem reshow failed (no previous problem): guid=" << guid << std::endl;
             return "fail : no previous problem";
+        }
 
         bool saved = competition_session::update(c.guid, c.teams.size(), [&](competition_session& s, bool) {
             bool switching_problem = (s.current_type != target_type || s.current_id != target_id);
@@ -1433,24 +1847,31 @@ std::string competition_display_problem_handler::generate_response(const request
         });
 
         if (!saved)
+        {
+            std::cout << "[ERROR] POST /main/competition/display/problem session save failed on reshow: guid=" << guid << std::endl;
             return "fail : session_save_failed|" + std::to_string(target_type) + "|" + std::to_string(target_id);
+        }
 
         return reshow_html;
     }
 
     if (!ctx.has_param("type"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/problem missing type: guid=" << guid << std::endl;
         return "fail : type not found";
     }
 
     int req_type = -1;
-    if (!try_parse_int(ctx.get_param("type"), req_type) || req_type < 0 || req_type > 2)
+    if (!parse_int_in_range(ctx, "type", 0, 2, req_type))
+    {
+        std::cout << "[WARN] POST /main/competition/display/problem invalid type=" << ctx.get_param("type")
+            << ", guid=" << guid << std::endl;
         return "fail : invalid type";
+    }
 
     if (ctx.has_param("requestcomplexity")) // 用于轮答，请求一种数量足够的难度，失败则返回0; 参数只用于标记，忽略其值
     {
-		int spare_count[4]; // 1-3分别对应难度1-3
+		int spare_count[4] = { 0, 0, 0, 0 }; // 1-3分别对应难度1-3
 
         // 加载可用题目数量
         switch (req_type) // Type: 0-选择题，1-填空题，2-信息题
@@ -1492,8 +1913,12 @@ std::string competition_display_problem_handler::generate_response(const request
     int requested_complexity = 0; // 默认为0：不限
     if (ctx.has_param("complexity")) // 用于轮答，以前请求了固定的难度
     {
-		if (!try_parse_int(ctx.get_param("complexity"), requested_complexity) || requested_complexity < 0 || requested_complexity > 3)
-            requested_complexity = 0;
+		if (!parse_int_in_range(ctx, "complexity", 0, 3, requested_complexity))
+		{
+			std::cout << "[WARN] POST /main/competition/display/problem invalid complexity="
+				<< ctx.get_param("complexity") << ", guid=" << guid << std::endl;
+			return "fail : invalid complexity";
+		}
     }
     
     std::string p_content, p_info[5], p_ans;
@@ -1513,37 +1938,43 @@ std::string competition_display_problem_handler::generate_response(const request
 
 			if (filtered_problems.size() == 0)
             {
-                // return "fail : no unused choice problems with requested complexity";
 				requested_complexity = 0; // 降级为不限难度
             }
             else
             {
-                random_id = RandomGenerator::getInstance().getInt(0, filtered_problems.size() - 1);
+                random_id = RandomGenerator::getInstance().getInt(0, static_cast<int>(filtered_problems.size()) - 1);
                 random_id = filtered_problems[random_id].second; // 在 pl_unused.choice_problems 中的下标
             }
         }
         if (requested_complexity == 0)
         {
-            total = problem_list::count_unused(pl.choice_problems);
+            total = static_cast<int>(pl_unused.choice_problems.size());
             if (total == 0)
+            {
+                std::cout << "[WARN] No unused choice problems left: guid=" << guid << std::endl;
                 return "fail : no unused choice problems";
+            }
             random_id = RandomGenerator::getInstance().getInt(0, total - 1);
         }
         
         // 保存第 random_id 个未使用的题目信息
         p_content = pl_unused.choice_problems[random_id].first.content;
 		p_ans = pl_unused.choice_problems[random_id].first.answer;
-        for (int i = 0; i < 4; i++)
+        for (size_t i = 0; i < 4 && i < pl_unused.choice_problems[random_id].first.options.size(); i++)
 			p_info[i + 1] = pl_unused.choice_problems[random_id].first.options[i];
 
         // 标记已使用
-		total_id = pl_unused.choice_problems[random_id].first.id; // 主题库中文件名id与题目信息中id一致，与pl中vector列表的下标相差1
-		c.problems.choice_problems.push_back(std::make_pair(pl_unused.choice_problems[random_id].first, 1)); // 加入比赛题目列表，标记为已使用
+		total_id = pl_unused.choice_problems[random_id].first.id;
+		c.problems.choice_problems.push_back(std::make_pair(pl_unused.choice_problems[random_id].first, 1));
 		c.problems.save("data/competitions/" + c.guid + "/problems.json");
 
         pl_unused.choice_problems.erase(pl_unused.choice_problems.begin() + random_id);
 
-        pl.choice_problems[total_id - 1].second = 1; // 在主题库中标记为已使用
+        {
+            size_t bank_idx = find_problem_entry_index(pl.choice_problems, total_id);
+            if (bank_idx != std::string::npos)
+                pl.choice_problems[bank_idx].second = 1;
+        }
         pl.save("data/problems/problem_list.json");
 
         break;
@@ -1560,20 +1991,22 @@ std::string competition_display_problem_handler::generate_response(const request
 
             if (filtered_problems.size() == 0)
             {
-                // return "fail : no unused choice problems with requested complexity";
                 requested_complexity = 0; // 降级为不限难度
             }
             else
             {
-                random_id = RandomGenerator::getInstance().getInt(0, filtered_problems.size() - 1);
+                random_id = RandomGenerator::getInstance().getInt(0, static_cast<int>(filtered_problems.size()) - 1);
                 random_id = filtered_problems[random_id].second; // 在 pl_unused.completion_problems 中的下标
             }
         }
         if (requested_complexity == 0)
         {
-            total = problem_list::count_unused(pl.completion_problems);
+            total = static_cast<int>(pl_unused.completion_problems.size());
             if (total == 0)
+            {
+                std::cout << "[WARN] No unused completion problems left: guid=" << guid << std::endl;
                 return "fail : no unused completion problems";
+            }
             random_id = RandomGenerator::getInstance().getInt(0, total - 1);
         }
 
@@ -1582,13 +2015,17 @@ std::string competition_display_problem_handler::generate_response(const request
         p_ans = pl_unused.completion_problems[random_id].first.answer;
 
         // 标记已使用
-        total_id = pl_unused.completion_problems[random_id].first.id; // 主题库中文件名id与题目信息中id一致，与pl中vector列表的下标相差1
-        c.problems.completion_problems.push_back(std::make_pair(pl_unused.completion_problems[random_id].first, 1)); // 加入比赛题目列表，标记为已使用
+        total_id = pl_unused.completion_problems[random_id].first.id;
+        c.problems.completion_problems.push_back(std::make_pair(pl_unused.completion_problems[random_id].first, 1));
         c.problems.save("data/competitions/" + c.guid + "/problems.json");
 
         pl_unused.completion_problems.erase(pl_unused.completion_problems.begin() + random_id);
 
-        pl.completion_problems[total_id - 1].second = 1; // 在主题库中标记为已使用
+        {
+            size_t bank_idx = find_problem_entry_index(pl.completion_problems, total_id);
+            if (bank_idx != std::string::npos)
+                pl.completion_problems[bank_idx].second = 1;
+        }
         pl.save("data/problems/problem_list.json");
 
         break;
@@ -1605,37 +2042,43 @@ std::string competition_display_problem_handler::generate_response(const request
 
             if (filtered_problems.size() == 0)
             {
-                // return "fail : no unused choice problems with requested complexity";
                 requested_complexity = 0; // 降级为不限难度
             }
             else
             {
-                random_id = RandomGenerator::getInstance().getInt(0, filtered_problems.size() - 1);
+                random_id = RandomGenerator::getInstance().getInt(0, static_cast<int>(filtered_problems.size()) - 1);
                 random_id = filtered_problems[random_id].second; // 在 pl_unused.info_problems 中的下标
             }
         }
         if (requested_complexity == 0)
         {
-            total = problem_list::count_unused(pl.info_problems);
+            total = static_cast<int>(pl_unused.info_problems.size());
             if (total == 0)
+            {
+                std::cout << "[WARN] No unused info problems left: guid=" << guid << std::endl;
                 return "fail : no unused info problems";
+            }
             random_id = RandomGenerator::getInstance().getInt(0, total - 1);
         }
 
         // 保存第 random_id 个未使用的题目信息
         p_content = pl_unused.info_problems[random_id].first.content;
         p_ans = pl_unused.info_problems[random_id].first.answer;
-        for (int i = 0; i < 4; i++)
+        for (size_t i = 0; i < 4 && i < pl_unused.info_problems[random_id].first.info.size(); i++)
             p_info[i + 1] = pl_unused.info_problems[random_id].first.info[i];
 
         // 标记已使用
-        total_id = pl_unused.info_problems[random_id].first.id; // 主题库中文件名id与题目信息中id一致，与pl中vector列表的下标相差1
-        c.problems.info_problems.push_back(std::make_pair(pl_unused.info_problems[random_id].first, 1)); // 加入比赛题目列表，标记为已使用
+        total_id = pl_unused.info_problems[random_id].first.id;
+        c.problems.info_problems.push_back(std::make_pair(pl_unused.info_problems[random_id].first, 1));
         c.problems.save("data/competitions/" + c.guid + "/problems.json");
 
         pl_unused.info_problems.erase(pl_unused.info_problems.begin() + random_id);
 
-        pl.info_problems[total_id - 1].second = 1; // 在主题库中标记为已使用
+        {
+            size_t bank_idx = find_problem_entry_index(pl.info_problems, total_id);
+            if (bank_idx != std::string::npos)
+                pl.info_problems[bank_idx].second = 1;
+        }
         pl.save("data/problems/problem_list.json");
 
         break;
@@ -1671,7 +2114,10 @@ std::string competition_display_problem_handler::generate_response(const request
     });
 
     if (!saved)
+    {
+        std::cout << "[ERROR] POST /main/competition/display/problem session save failed: guid=" << guid << std::endl;
         return "fail : session_save_failed|" + std::to_string(req_type) + "|" + std::to_string(total_id);
+    }
 
     return render_problem_html(req_type, total_id, p_content, p_info, p_ans);
 }
@@ -1687,6 +2133,8 @@ std::string competition_display_session_handler::generate_response(const request
     if (!ctx.has_param("guid"))
         return "fail : guid not found";
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+        return "fail : invalid guid";
 
     auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
@@ -1754,10 +2202,15 @@ std::string competition_enddisplay_handler::generate_response(const request_cont
 {
     if (!ctx.has_param("guid"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/enddisplay missing guid" << std::endl;
         return "fail : guid not found";
     }
     const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/enddisplay invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
 
     auto comp_mutex = get_competition_mutex(guid);
     std::lock_guard<std::mutex> comp_lock(*comp_mutex);
@@ -1767,26 +2220,32 @@ std::string competition_enddisplay_handler::generate_response(const request_cont
 
     if (c.teams.size() == 0)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/enddisplay competition not found: guid=" << guid << std::endl;
         return "fail : guid not existed";
     }
 
     if (c.competition_status != competition::status::ONGOING)
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/enddisplay rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
         return "fail : competition isn't ongoing";
     }
 
     if (!ctx.has_param("action"))
     {
-        // error: TODO
+        std::cout << "[WARN] POST /main/competition/display/enddisplay missing action: guid=" << guid << std::endl;
         return "fail : action not found";
     }
 
     int action_val = -1;
-    if (!try_parse_int(ctx.get_param("action"), action_val) || (action_val != 0 && action_val != 1))
+    if (!parse_int_in_range(ctx, "action", 0, 1, action_val))
+    {
+        std::cout << "[WARN] POST /main/competition/display/enddisplay invalid action=" << ctx.get_param("action")
+            << ", guid=" << guid << std::endl;
         return "fail : invalid action";
+    }
 
+    const competition::status old_status = c.competition_status;
     switch (action_val)
     {
     case 0:
@@ -1801,5 +2260,270 @@ std::string competition_enddisplay_handler::generate_response(const request_cont
     }
     c.save();
 
+    std::cout << "Competition status changed: guid=" << c.guid << " (" << c.name << "), "
+        << competition_status_name(old_status) << " -> " << competition_status_name(c.competition_status) << std::endl;
+
     return "success";
+}
+
+void competition_start_handler::init()
+{
+    address = "/main/competition/display/start";
+    is_request_login = true;
+}
+std::string competition_start_handler::generate_response(const request_context& ctx)
+{
+    if (!ctx.has_param("guid"))
+    {
+        std::cout << "[WARN] POST /main/competition/display/start missing guid" << std::endl;
+        return "fail : guid not found";
+    }
+    const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/start invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+    competition c;
+    c.load(guid);
+
+    if (c.teams.size() == 0)
+    {
+        std::cout << "[WARN] POST /main/competition/display/start competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
+    }
+
+    if (c.competition_status != competition::status::NOT_STARTED)
+    {
+        std::cout << "[WARN] POST /main/competition/display/start rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        return "fail : competition already started";
+    }
+
+    const competition::status old_status = c.competition_status;
+    c.competition_status = competition::status::ONGOING;
+    c.save();
+
+    std::cout << "Competition status changed: guid=" << c.guid << " (" << c.name << "), "
+        << competition_status_name(old_status) << " -> " << competition_status_name(c.competition_status) << std::endl;
+
+    return "success";
+}
+
+void competition_pause_handler::init()
+{
+    address = "/main/competition/display/pause";
+    is_request_login = true;
+}
+std::string competition_pause_handler::generate_response(const request_context& ctx)
+{
+    if (!ctx.has_param("guid"))
+    {
+        std::cout << "[WARN] POST /main/competition/display/pause missing guid" << std::endl;
+        return "fail : guid not found";
+    }
+    const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/pause invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+    competition c;
+    c.load(guid);
+
+    if (c.teams.size() == 0)
+    {
+        std::cout << "[WARN] POST /main/competition/display/pause competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
+    }
+
+    if (c.competition_status != competition::status::ONGOING)
+    {
+        std::cout << "[WARN] POST /main/competition/display/pause rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        return "fail : competition isn't ongoing";
+    }
+
+    const competition::status old_status = c.competition_status;
+    c.competition_status = competition::status::PAUSED;
+    competition_session::clear(c.guid);
+    c.save();
+
+    std::cout << "Competition status changed: guid=" << c.guid << " (" << c.name << "), "
+        << competition_status_name(old_status) << " -> " << competition_status_name(c.competition_status) << std::endl;
+
+    return "success";
+}
+
+void competition_resume_handler::init()
+{
+    address = "/main/competition/display/resume";
+    is_request_login = true;
+}
+std::string competition_resume_handler::generate_response(const request_context& ctx)
+{
+    if (!ctx.has_param("guid"))
+    {
+        std::cout << "[WARN] POST /main/competition/display/resume missing guid" << std::endl;
+        return "fail : guid not found";
+    }
+    const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/resume invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
+
+    const std::string target = ctx.get_param("target", "ongoing");
+    if (target != "ongoing" && target != "paused")
+    {
+        std::cout << "[WARN] POST /main/competition/display/resume invalid target=" << target
+            << ", guid=" << guid << std::endl;
+        return "fail : invalid target";
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+    competition c;
+    c.load(guid);
+
+    if (c.teams.size() == 0)
+    {
+        std::cout << "[WARN] POST /main/competition/display/resume competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
+    }
+
+    if (c.competition_status != competition::status::PAUSED && c.competition_status != competition::status::FINISHED)
+    {
+        std::cout << "[WARN] POST /main/competition/display/resume rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        return "fail : competition cannot be resumed from current status";
+    }
+
+    if (c.competition_status == competition::status::PAUSED && target == "paused")
+    {
+        return "success";
+    }
+
+    const competition::status old_status = c.competition_status;
+    c.competition_status = (target == "paused") ? competition::status::PAUSED : competition::status::ONGOING;
+    if (old_status == competition::status::FINISHED)
+        competition_session::clear(c.guid);
+    c.save();
+
+    std::cout << "Competition status changed: guid=" << c.guid << " (" << c.name << "), "
+        << competition_status_name(old_status) << " -> " << competition_status_name(c.competition_status) << std::endl;
+
+    return "success";
+}
+
+void competition_finish_handler::init()
+{
+    address = "/main/competition/display/finish";
+    is_request_login = true;
+}
+std::string competition_finish_handler::generate_response(const request_context& ctx)
+{
+    if (!ctx.has_param("guid"))
+    {
+        std::cout << "[WARN] POST /main/competition/display/finish missing guid" << std::endl;
+        return "fail : guid not found";
+    }
+    const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/display/finish invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+    competition c;
+    c.load(guid);
+
+    if (c.teams.size() == 0)
+    {
+        std::cout << "[WARN] POST /main/competition/display/finish competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
+    }
+
+    if (c.competition_status != competition::status::ONGOING && c.competition_status != competition::status::PAUSED)
+    {
+        std::cout << "[WARN] POST /main/competition/display/finish rejected for status="
+            << competition_status_name(c.competition_status) << ", guid=" << guid << std::endl;
+        return "fail : competition cannot be finished from current status";
+    }
+
+    const competition::status old_status = c.competition_status;
+    c.competition_status = competition::status::FINISHED;
+    competition_session::clear(c.guid);
+    c.save();
+
+    std::cout << "Competition status changed: guid=" << c.guid << " (" << c.name << "), "
+        << competition_status_name(old_status) << " -> " << competition_status_name(c.competition_status) << std::endl;
+
+    return "success";
+}
+
+void competition_copy_handler::init()
+{
+    address = "/main/competition/copy";
+    is_request_login = true;
+}
+std::string competition_copy_handler::generate_response(const request_context& ctx)
+{
+    if (!ctx.has_param("guid"))
+    {
+        std::cout << "[WARN] POST /main/competition/copy missing guid" << std::endl;
+        return "fail : guid not found";
+    }
+    const std::string guid = ctx.get_param("guid");
+    if (!is_valid_competition_guid(guid))
+    {
+        std::cout << "[WARN] POST /main/competition/copy invalid guid: " << guid << std::endl;
+        return "fail : invalid guid";
+    }
+
+    auto comp_mutex = get_competition_mutex(guid);
+    std::lock_guard<std::mutex> comp_lock(*comp_mutex);
+
+    competition src;
+    src.load(guid);
+
+    if (src.teams.size() == 0)
+    {
+        std::cout << "[WARN] POST /main/competition/copy competition not found: guid=" << guid << std::endl;
+        return "fail : guid not existed";
+    }
+
+    competition copy_c;
+    copy_c.guid = competition::generate_guid();
+    copy_c.name = src.name + " (副本)";
+    copy_c.description = src.description;
+    copy_c.teams = src.teams;
+    copy_c.team_scores.assign(src.teams.size(), 0);
+    copy_c.competition_status = competition::status::NOT_STARTED;
+    copy_c.choice_count = src.choice_count;
+    copy_c.completion_count = src.completion_count;
+    copy_c.info_count = src.info_count;
+    copy_c.save();
+
+    auto comlist = load_competition_list("data/competitions/list.json");
+    comlist.push_back(copy_c.guid);
+    save_competition_list("data/competitions/list.json", comlist);
+
+    std::cout << "Copied competition: src_guid=" << src.guid << " -> new_guid=" << copy_c.guid
+        << " (" << copy_c.name << "), status=" << competition_status_name(copy_c.competition_status) << std::endl;
+
+    return "success:" + copy_c.guid;
 }

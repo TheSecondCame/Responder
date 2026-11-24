@@ -14,10 +14,13 @@
 #include "responder_request.h"
 #include "responder_problem.h"
 #include "responder_competition.h"
+#include "responder_pages.h"
 #include "logging.h"
 #include "problem_upload.h"
 
 std::string authentic_token = "CONCURRENCY_TEST_TOKEN_50_CHARS_0123456789ABCDEFGH";
+problem_list pl;
+problem_list pl_unused;
 
 namespace fs = std::filesystem;
 
@@ -679,6 +682,290 @@ static void TestConcurrentRequestContextRouting()
     assert(failures.load() == 0);
 }
 
+static void TestAtomicBackupAndScoresSafety(const fs::path& workdir)
+{
+    const fs::path bank_dir = workdir / "atomic_bank";
+    const fs::path backup_dir = workdir / "atomic_backup";
+    fs::create_directories(bank_dir);
+    WriteText(bank_dir / "choice_1.json", R"({"id":1,"content":"Q1","answer":"A","options":["A","B","C","D"],"complexity":1})");
+    WriteText(bank_dir / "problem_list.json", R"({"choice_problems":[[1,0]],"completion_problems":[],"info_problems":[]})");
+
+    std::ostringstream log;
+    assert(backup_problem_bank(bank_dir.string(), backup_dir.string(), log));
+    assert(fs::exists(backup_dir / "choice_1.json"));
+    assert(fs::exists(backup_dir / "problem_list.json"));
+
+    // Failed backup (e.g. non-existent source) must preserve existing backup intact
+    assert(!backup_problem_bank((workdir / "missing_bank").string(), backup_dir.string(), log));
+    assert(fs::exists(backup_dir / "choice_1.json"));
+    assert(ReadAllText(backup_dir / "choice_1.json").find("\"Q1\"") != std::string::npos);
+
+    // Truncated & corrupt scores.json must default missing/invalid entries to 0 (no silent duplication)
+    fs::create_directories(workdir / "data" / "competitions");
+    competition c;
+    c.guid = "test-scores-safety-guid";
+    c.name = "Scores Safety";
+    c.description = "Regression";
+    c.teams = { { "Alpha", 'A' }, { "Beta", 'B' }, { "Gamma", 'C' } };
+    c.team_scores = { 0, 0, 0 };
+    c.competition_status = competition::ONGOING;
+    c.save();
+
+    const fs::path scores_path = workdir / "data" / "competitions" / c.guid / "scores.json";
+    WriteText(scores_path, "42\n");
+    competition truncated_loaded;
+    truncated_loaded.load(c.guid);
+    assert(truncated_loaded.team_scores == std::vector<int>({ 42, 0, 0 }));
+
+    WriteText(scores_path, "10\nbad_entry\n30\n");
+    competition corrupt_loaded;
+    corrupt_loaded.load(c.guid);
+    assert(corrupt_loaded.team_scores == std::vector<int>({ 10, 0, 30 }));
+
+    corrupt_loaded.team_scores = { 5, -1, 12 };
+    assert(corrupt_loaded.save_scores());
+    assert(!fs::exists(workdir / "data" / "competitions" / c.guid / "scores.json.tmp"));
+
+    competition atomic_reloaded;
+    atomic_reloaded.load(c.guid);
+    assert(atomic_reloaded.team_scores == std::vector<int>({ 5, -1, 12 }));
+}
+
+static void TestCompetitionStateMachineAndErrorPages(const fs::path& workdir)
+{
+    fs::create_directories(workdir / "data" / "problems");
+    fs::create_directories(workdir / "data" / "competitions");
+
+    const std::string bankTxt =
+        "1 0\nChoice 1\nA\nB\nC\nD\nA\n\n"
+        "1 0\nChoice 2\nA\nB\nC\nD\nB\n\n"
+        "1 0\nChoice 3\nA\nB\nC\nD\nC\n\n"
+        "1 0\nChoice 4\nA\nB\nC\nD\nD\n";
+    WriteText(workdir / "sm_bank.txt", bankTxt);
+    problem_list::convert((workdir / "sm_bank.txt").string(), "data/problems/");
+
+    pl.choice_problems.clear();
+    pl.completion_problems.clear();
+    pl.info_problems.clear();
+    pl.load("data/problems/problem_list.json");
+    pl_unused = pl;
+    pl_unused.remove_used();
+    assert(problem_list::count_unused(pl.choice_problems) == 4);
+
+    new_competition_handler nch;
+    competition_detail_page cdp;
+    competition_edit_page cep;
+    competition_edit_handler ceh;
+    competition_delete_handler cdh;
+    competition_display_page cdp2;
+    competition_display_scores_handler cdsh;
+    competition_display_problem_handler cdph;
+    competition_enddisplay_handler cdedh;
+    competition_start_handler csh;
+    competition_pause_handler cph;
+    competition_resume_handler crh;
+    competition_finish_handler cfh;
+    competition_copy_handler cch;
+
+    httplib::Server svr;
+    nch.set_handler(svr);
+    cdp.set_handler(svr);
+    cep.set_handler(svr);
+    ceh.set_handler(svr);
+    cdh.set_handler(svr);
+    cdp2.set_handler(svr);
+    cdsh.set_handler(svr);
+    cdph.set_handler(svr);
+    cdedh.set_handler(svr);
+    csh.set_handler(svr);
+    cph.set_handler(svr);
+    crh.set_handler(svr);
+    cfh.set_handler(svr);
+    cch.set_handler(svr);
+
+    int port = svr.bind_to_any_port("127.0.0.1");
+    assert(port > 0);
+
+    std::ostringstream audit_capture;
+    std::streambuf* prev_cout = std::cout.rdbuf(audit_capture.rdbuf());
+    struct CoutRestorer {
+        std::streambuf* prev;
+        ~CoutRestorer() { std::cout.rdbuf(prev); }
+    } restorer{ prev_cout };
+
+    std::thread server_thread([&]() { svr.listen_after_bind(); });
+    svr.wait_until_ready();
+
+    httplib::Client cli("127.0.0.1", port);
+    httplib::Headers hdrs = { { "Cookie", "token=" + authentic_token } };
+
+    // #8: Error pages return informative HTML + proper status codes instead of blank pages
+    auto rNotExistDetail = cli.Get("/main/competition/detail?guid=not-exist", hdrs);
+    assert(rNotExistDetail && rNotExistDetail->status == 404);
+    assert(rNotExistDetail->body.find("比赛不存在") != std::string::npos);
+
+    auto rTraversalDetail = cli.Get("/main/competition/detail?guid=../../problems", hdrs);
+    assert(rTraversalDetail && rTraversalDetail->status == 400);
+    assert(rTraversalDetail->body.find("无效的比赛 ID") != std::string::npos);
+
+    auto rNotExistEdit = cli.Get("/main/competition/edit?guid=not-exist", hdrs);
+    assert(rNotExistEdit && rNotExistEdit->status == 404);
+    assert(rNotExistEdit->body.find("比赛不存在") != std::string::npos);
+
+    auto rBadNew = cli.Post("/main/competition/new", hdrs,
+        "name=Bad&description=D&choiceCount=abc&completionCount=0&infoCount=0&teamName1=A&teamName2=B",
+        "application/x-www-form-urlencoded");
+    assert(rBadNew && rBadNew->status == 200);
+    assert(rBadNew->body.find("创建比赛失败") != std::string::npos);
+
+    auto rBadEditPost = cli.Post("/main/competition/edit?guid=not-exist", hdrs,
+        "name=Bad&description=D&choiceCount=1&completionCount=0&infoCount=0&teamName1=A&teamName2=B",
+        "application/x-www-form-urlencoded");
+    assert(rBadEditPost && rBadEditPost->status == 200);
+    assert(rBadEditPost->body.find("比赛不存在") != std::string::npos);
+
+    // Create a valid competition
+    auto rCreate = cli.Post("/main/competition/new", hdrs,
+        "name=SMTest&description=Desc&choiceCount=3&completionCount=0&infoCount=0&teamName1=Alpha&teamName2=Beta",
+        "application/x-www-form-urlencoded");
+    assert(rCreate && rCreate->status == 200);
+    const std::string marker = "guid=";
+    size_t pos = rCreate->body.find(marker);
+    assert(pos != std::string::npos);
+    size_t end_pos = rCreate->body.find('"', pos + marker.size());
+    assert(end_pos != std::string::npos);
+    const std::string guid1 = rCreate->body.substr(pos + marker.size(), end_pos - (pos + marker.size()));
+
+    // #4: GET /display on NOT_STARTED must NOT start it
+    auto rDisplayNotStarted = cli.Get(("/main/competition/display?guid=" + guid1).c_str(), hdrs);
+    assert(rDisplayNotStarted && rDisplayNotStarted->status == 409);
+    {
+        competition check_c;
+        check_c.load(guid1);
+        assert(check_c.competition_status == competition::NOT_STARTED);
+    }
+
+    // Explicit start -> ONGOING
+    auto rStart = cli.Post(("/main/competition/display/start?guid=" + guid1).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rStart && rStart->body == "success");
+    auto rDisplayOngoing = cli.Get(("/main/competition/display?guid=" + guid1).c_str(), hdrs);
+    assert(rDisplayOngoing && rDisplayOngoing->status == 200);
+
+    // #8: GET /edit while ONGOING returns 409 error page
+    auto rEditOngoing = cli.Get(("/main/competition/edit?guid=" + guid1).c_str(), hdrs);
+    assert(rEditOngoing && rEditOngoing->status == 409);
+    assert(rEditOngoing->body.find("当前状态不允许编辑") != std::string::npos);
+
+    // #5: Score & draw bounds validation
+    auto rScoreBadTeam = cli.Post(("/main/competition/display/scores?guid=" + guid1 + "&team=99&score=10").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rScoreBadTeam && rScoreBadTeam->body.rfind("fail :", 0) == 0);
+    auto rScoreBadStr = cli.Post(("/main/competition/display/scores?guid=" + guid1 + "&team=abc&score=10").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rScoreBadStr && rScoreBadStr->body.rfind("fail :", 0) == 0);
+    auto rScoreOverflow = cli.Post(("/main/competition/display/scores?guid=" + guid1 + "&team=0&score=1000000000").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rScoreOverflow && rScoreOverflow->body.rfind("fail :", 0) == 0);
+    auto rScoreSci = cli.Post(("/main/competition/display/scores?guid=" + guid1 + "&team=0&score=1e9").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rScoreSci && rScoreSci->body.rfind("fail :", 0) == 0);
+    auto rScoreOk = cli.Post(("/main/competition/display/scores?guid=" + guid1 + "&team=0&score=5").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rScoreOk && rScoreOk->body == "success");
+    {
+        competition check_c;
+        check_c.load(guid1);
+        assert(check_c.team_scores[0] == 5);
+        assert(check_c.team_scores[1] == 0);
+    }
+
+    auto rBadType = cli.Post(("/main/competition/display/problem?guid=" + guid1 + "&type=9").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rBadType && rBadType->body == "fail : invalid type");
+    auto rBadComp = cli.Post(("/main/competition/display/problem?guid=" + guid1 + "&type=0&complexity=9").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rBadComp && rBadComp->body == "fail : invalid complexity");
+
+    // Draw 3 choice problems for #6
+    for (int k = 0; k < 3; ++k)
+    {
+        auto rDraw = cli.Post(("/main/competition/display/problem?guid=" + guid1 + "&type=0").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+        assert(rDraw && rDraw->body.find("problemMeta") != std::string::npos);
+    }
+    assert(problem_list::count_unused(pl.choice_problems) == 1);
+    assert(pl_unused.choice_problems.size() == 1);
+
+    // #4: Pause -> repeated GET /display keeps PAUSED
+    auto rPause = cli.Post(("/main/competition/display/pause?guid=" + guid1).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rPause && rPause->body == "success");
+    for (int k = 0; k < 3; ++k)
+    {
+        auto rDisplayPaused = cli.Get(("/main/competition/display?guid=" + guid1).c_str(), hdrs);
+        assert(rDisplayPaused && rDisplayPaused->status == 409);
+        competition check_c;
+        check_c.load(guid1);
+        assert(check_c.competition_status == competition::PAUSED);
+    }
+
+    // Finish -> GET /display keeps FINISHED -> resume to PAUSED and ONGOING
+    auto rFinish = cli.Post(("/main/competition/display/finish?guid=" + guid1).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rFinish && rFinish->body == "success");
+    auto rDisplayFinished = cli.Get(("/main/competition/display?guid=" + guid1).c_str(), hdrs);
+    assert(rDisplayFinished && rDisplayFinished->status == 409);
+
+    auto rRestorePaused = cli.Post(("/main/competition/display/resume?guid=" + guid1 + "&target=paused").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rRestorePaused && rRestorePaused->body == "success");
+    {
+        competition check_c;
+        check_c.load(guid1);
+        assert(check_c.competition_status == competition::PAUSED);
+    }
+    auto rRestoreOngoing = cli.Post(("/main/competition/display/resume?guid=" + guid1 + "&target=ongoing").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rRestoreOngoing && rRestoreOngoing->body == "success");
+    auto rEndFinish = cli.Post(("/main/competition/display/enddisplay?guid=" + guid1 + "&action=1").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rEndFinish && rEndFinish->body == "success");
+
+    // Copy finished competition
+    auto rCopy = cli.Post(("/main/competition/copy?guid=" + guid1).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rCopy && rCopy->body.rfind("success:", 0) == 0);
+    const std::string guid2 = rCopy->body.substr(8);
+    {
+        competition copied_c;
+        copied_c.load(guid2);
+        assert(copied_c.competition_status == competition::NOT_STARTED);
+        assert(copied_c.teams.size() == 2);
+        assert(copied_c.problems.choice_problems.empty());
+    }
+
+    // #6: Delete guid1 with return_problems=1 (default) restores 3 used problems
+    auto rDelReturn = cli.Post(("/main/competition/delete?guid=" + guid1).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rDelReturn && rDelReturn->body == "Yes");
+    assert(problem_list::count_unused(pl.choice_problems) == 4);
+    assert(pl_unused.choice_problems.size() == 4);
+
+    // Reload from disk to verify persistence of returned flags
+    problem_list reloaded_pl;
+    reloaded_pl.load("data/problems/problem_list.json");
+    assert(problem_list::count_unused(reloaded_pl.choice_problems) == 4);
+
+    // Start guid2, draw 2 problems, finish, delete with return_problems=0 -> keeps used flags
+    auto rStart2 = cli.Post(("/main/competition/display/start?guid=" + guid2).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rStart2 && rStart2->body == "success");
+    for (int k = 0; k < 2; ++k)
+    {
+        auto rDraw2 = cli.Post(("/main/competition/display/problem?guid=" + guid2 + "&type=0").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+        assert(rDraw2 && rDraw2->body.find("problemMeta") != std::string::npos);
+    }
+    assert(problem_list::count_unused(pl.choice_problems) == 2);
+    auto rFinish2 = cli.Post(("/main/competition/display/finish?guid=" + guid2).c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rFinish2 && rFinish2->body == "success");
+    auto rDelKeep = cli.Post(("/main/competition/delete?guid=" + guid2 + "&return_problems=0").c_str(), hdrs, "", "application/x-www-form-urlencoded");
+    assert(rDelKeep && rDelKeep->body == "Yes");
+    assert(problem_list::count_unused(pl.choice_problems) == 2);
+    assert(pl_unused.choice_problems.size() == 2);
+
+    svr.stop();
+    server_thread.join();
+
+    const std::string logs = audit_capture.str();
+    assert(logs.find("Competition status changed:") != std::string::npos);
+    assert(logs.find("Rejected") != std::string::npos || logs.find("[WARN]") != std::string::npos);
+    assert(logs.find("Deleted competition:") != std::string::npos);
+}
+
 int main()
 {
     SetConsoleOutputCP(CP_UTF8);
@@ -698,6 +985,8 @@ int main()
     TestEncodingAndFormParsing();
     TestProblemStreamLoggingNoCoutHijack(temp_dir);
     TestConcurrentRequestContextRouting();
+    TestAtomicBackupAndScoresSafety(temp_dir);
+    TestCompetitionStateMachineAndErrorPages(temp_dir);
 
     fs::current_path(orig_cwd);
     std::error_code ec;

@@ -41,6 +41,7 @@ struct page_context
 	std::string content;
 	bool is_index_page = true;
 	bool is_full_custom = false;
+	int status_code = 200;
 };
 
 request_context build_request_context(const httplib::Request& req, bool parse_urlencoded_body);
@@ -71,6 +72,7 @@ protected:
 	bool is_index_page = true;         // 是否包含浅蓝色顶栏
 	bool is_full_custom = false;       // 是否完全自定义输出（不使用模板）
 
+	std::string render_page_with_status(const request_context& ctx, int& out_status);
 	std::string generate_response(const request_context& ctx) override;
 	virtual void generate_page(const request_context& ctx, page_context& page) = 0;
 public:

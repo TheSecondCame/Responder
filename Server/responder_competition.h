@@ -112,9 +112,13 @@ public:
 
 	void load(std::string guid);
 	void save();
+	bool save_scores() const;
 
 	static std::string generate_guid();
 };
+
+bool is_valid_competition_guid(const std::string& guid);
+const char* competition_status_name(competition::status s);
 
 #endif // RESPONDER_COMPETITION_H
 

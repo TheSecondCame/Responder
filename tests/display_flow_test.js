@@ -631,12 +631,61 @@ async function testNormalReshowFailureOnRevealedProblemPreservesState() {
     }
 }
 
+async function testEndCompetitionDoubleConfirmation() {
+    const swalResponses = [];
+    const h = createHarness({
+        location: { href: '' },
+        Swal: {
+            fire(opts) {
+                const next = swalResponses.shift() || { isConfirmed: false, isDenied: false, isDismissed: true };
+                return Promise.resolve(next);
+            }
+        }
+    });
+    const ctx = h.context;
+    const endCalls = [];
+    h.setAjaxHandler((opts) => {
+        if (opts.url.startsWith('/main/competition/display/enddisplay')) {
+            endCalls.push(opts.url);
+            return 'success';
+        }
+        return 'success';
+    });
+
+    // 1) Dismissing the dialog must NOT pause or finish the competition or clear onbeforeunload
+    swalResponses.push({ isConfirmed: false, isDenied: false, isDismissed: true });
+    ctx.EndCompetition();
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(endCalls.length, 0);
+    assert.strictEqual(typeof ctx.onbeforeunload, 'function');
+
+    // 2) Choosing "结束比赛" (isDenied) and cancelling the second confirmation must NOT finish
+    swalResponses.push({ isConfirmed: false, isDenied: true, isDismissed: false });
+    swalResponses.push({ isConfirmed: false, isDenied: false, isDismissed: true });
+    ctx.EndCompetition();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(endCalls.length, 0);
+    assert.strictEqual(typeof ctx.onbeforeunload, 'function');
+
+    // 3) Choosing "结束比赛" (isDenied) and confirming the second prompt sends action=1
+    swalResponses.push({ isConfirmed: false, isDenied: true, isDismissed: false });
+    swalResponses.push({ isConfirmed: true, isDenied: false, isDismissed: false });
+    ctx.EndCompetition();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(endCalls.length, 1);
+    assert.ok(endCalls[0].includes('action=1'));
+    assert.strictEqual(ctx.onbeforeunload, undefined);
+}
+
 (async () => {
     await testAutoRoundFailureRecoveryAndNextTeam();
     await testAutoRoundF5RefreshBeforeRetry();
     await testResponderModeFailureRecovery();
     await testAutoRoundWithTimeBeforeCountdownAndCorrectAnswer();
     await testNormalReshowFailureOnRevealedProblemPreservesState();
+    await testEndCompetitionDoubleConfirmation();
     console.log('All JS display flow tests passed.');
 })().catch((err) => {
     console.error(err);

@@ -128,7 +128,7 @@ std::string get_token(const httplib::Request & req) // by ChatGPT
     return "";
 }
 
-std::string responder_page::generate_response(const request_context& ctx)
+std::string responder_page::render_page_with_status(const request_context& ctx, int& out_status)
 {
 	page_context page;
 	page.browser_title = browser_title;
@@ -136,14 +136,22 @@ std::string responder_page::generate_response(const request_context& ctx)
 	page.breadcrumb = breadcrumb;
 	page.is_index_page = is_index_page;
 	page.is_full_custom = is_full_custom;
+	page.status_code = 200;
 
 	generate_page(ctx, page);
+	out_status = page.status_code;
 
 	if (page.is_full_custom)
 		return page.content;
 
 	return output_html_code(page.browser_title, page.breadcrumb, page.page_title, page.content,
 		page.is_index_page, is_request_login);
+}
+
+std::string responder_page::generate_response(const request_context& ctx)
+{
+	int status = 200;
+	return render_page_with_status(ctx, status);
 }
 
 void responder_page::set_handler(httplib::Server& svr)
@@ -170,7 +178,10 @@ void responder_page::set_handler(httplib::Server& svr)
 		}
 
 		request_context ctx = build_request_context(req, false);
-		res.set_content(generate_response(ctx), "text/html;charset=utf-8");
+		int status = 200;
+		std::string body = render_page_with_status(ctx, status);
+		res.status = status;
+		res.set_content(body, "text/html;charset=utf-8");
 	});
 
     if (address[address.size() - 1] != '/')
@@ -223,6 +234,9 @@ void responder_post_page::set_handler(httplib::Server& svr)
         }
 
         request_context ctx = build_request_context(req, true);
-        res.set_content(generate_response(ctx), "text/html;charset=utf-8");
+        int status = 200;
+        std::string body = render_page_with_status(ctx, status);
+        res.status = status;
+        res.set_content(body, "text/html;charset=utf-8");
     });
 }

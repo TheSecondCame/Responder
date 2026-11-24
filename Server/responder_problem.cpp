@@ -6,15 +6,33 @@
 #include "responder_problem.h"
 #include "functions.h"
 #include <Windows.h>
+#include <filesystem>
+#include <stdexcept>
+#include <system_error>
 
 // Report write failures to callers before they publish a new index or bank.
 static void write_problem_json(const std::string& filename, const json& record)
 {
-	std::ofstream out;
-	out.exceptions(std::ios::badbit | std::ios::failbit);
-	out.open(filename);
-	out << record.dump();
-	out.close();
+	const std::string tmp = filename + ".tmp";
+	try
+	{
+		std::ofstream out;
+		out.exceptions(std::ios::badbit | std::ios::failbit);
+		out.open(tmp, std::ios::binary | std::ios::trunc);
+		out << record.dump();
+		out.close();
+
+		if (!MoveFileExA(tmp.c_str(), filename.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+		{
+			DeleteFileA(tmp.c_str());
+			throw std::runtime_error("Failed to atomically replace " + filename);
+		}
+	}
+	catch (...)
+	{
+		DeleteFileA(tmp.c_str());
+		throw;
+	}
 }
 
 void problem_completion::load(std::string filename, std::ostream& log)
@@ -23,17 +41,21 @@ void problem_completion::load(std::string filename, std::ostream& log)
 	if (fin.fail())
 	{
 		log << "Failed to load problem from " << filename << std::endl;
-		// TODO: MessageBox
 		return;
 	}
 
-	json jsbuf = json::parse(fin);
+	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
+	if (!jsbuf.is_object())
+	{
+		log << "Invalid JSON in problem file: " << filename << std::endl;
+		return;
+	}
 
-	jsbuf["id"].get_to(id);
-	jsbuf["content"].get_to(content);
-	jsbuf["answer"].get_to(answer);
-	jsbuf["complexity"].get_to(complexity);
+	if (jsbuf.contains("id") && jsbuf["id"].is_number_integer()) jsbuf["id"].get_to(id);
+	if (jsbuf.contains("content") && jsbuf["content"].is_string()) jsbuf["content"].get_to(content);
+	if (jsbuf.contains("answer") && jsbuf["answer"].is_string()) jsbuf["answer"].get_to(answer);
+	if (jsbuf.contains("complexity") && jsbuf["complexity"].is_number_integer()) jsbuf["complexity"].get_to(complexity);
 }
 void problem_completion::save(std::string filename)
 {
@@ -52,18 +74,22 @@ void problem_choice::load(std::string filename, std::ostream& log)
 	if (fin.fail())
 	{
 		log << "Failed to load problem from " << filename << std::endl;
-		// TODO: MessageBox
 		return;
 	}
 
-	json jsbuf = json::parse(fin);
+	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
+	if (!jsbuf.is_object())
+	{
+		log << "Invalid JSON in problem file: " << filename << std::endl;
+		return;
+	}
 
-	jsbuf["id"].get_to(id);
-	jsbuf["content"].get_to(content);
-	jsbuf["answer"].get_to(answer);
-	jsbuf["options"].get_to(options);
-	jsbuf["complexity"].get_to(complexity);
+	if (jsbuf.contains("id") && jsbuf["id"].is_number_integer()) jsbuf["id"].get_to(id);
+	if (jsbuf.contains("content") && jsbuf["content"].is_string()) jsbuf["content"].get_to(content);
+	if (jsbuf.contains("answer") && jsbuf["answer"].is_string()) jsbuf["answer"].get_to(answer);
+	if (jsbuf.contains("options") && jsbuf["options"].is_array()) jsbuf["options"].get_to(options);
+	if (jsbuf.contains("complexity") && jsbuf["complexity"].is_number_integer()) jsbuf["complexity"].get_to(complexity);
 }
 void problem_choice::save(std::string filename)
 {
@@ -83,18 +109,22 @@ void problem_info::load(std::string filename, std::ostream& log)
 	if (fin.fail())
 	{
 		log << "Failed to load problem from " << filename << std::endl;
-		// TODO: MessageBox
 		return;
 	}
 
-	json jsbuf = json::parse(fin);
+	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
+	if (!jsbuf.is_object())
+	{
+		log << "Invalid JSON in problem file: " << filename << std::endl;
+		return;
+	}
 
-	jsbuf["id"].get_to(id);
-	jsbuf["content"].get_to(content);
-	jsbuf["answer"].get_to(answer);
-	jsbuf["info"].get_to(info);
-	jsbuf["complexity"].get_to(complexity);
+	if (jsbuf.contains("id") && jsbuf["id"].is_number_integer()) jsbuf["id"].get_to(id);
+	if (jsbuf.contains("content") && jsbuf["content"].is_string()) jsbuf["content"].get_to(content);
+	if (jsbuf.contains("answer") && jsbuf["answer"].is_string()) jsbuf["answer"].get_to(answer);
+	if (jsbuf.contains("info") && jsbuf["info"].is_array()) jsbuf["info"].get_to(info);
+	if (jsbuf.contains("complexity") && jsbuf["complexity"].is_number_integer()) jsbuf["complexity"].get_to(complexity);
 }
 void problem_info::save(std::string filename)
 {
@@ -114,33 +144,49 @@ void problem_list::load(std::string filename, std::ostream& log)
 	if (fin.fail())
 	{
 		log << "Failed to load problem list from " << filename << std::endl;
-		// TODO: MessageBox
 		return;
 	}
 
-	json jsbuf = json::parse(fin);
+	json jsbuf = json::parse(fin, nullptr, false);
 	fin.close();
+	if (!jsbuf.is_object())
+	{
+		log << "Invalid JSON in problem list file: " << filename << std::endl;
+		return;
+	}
 
 	std::vector<std::pair<int, int>> _list;
-	jsbuf["choice_problems"].get_to(_list);
-	for (const auto& choice : _list)
+	if (jsbuf.contains("choice_problems") && jsbuf["choice_problems"].is_array())
 	{
-		choice_problems.push_back(std::make_pair(problem_choice(), choice.second));
-		choice_problems.back().first.load("data/problems/choice_" + std::to_string(choice.first) + ".json", log);
+		_list.clear();
+		jsbuf["choice_problems"].get_to(_list);
+		for (const auto& choice : _list)
+		{
+			choice_problems.push_back(std::make_pair(problem_choice(), choice.second));
+			choice_problems.back().first.load("data/problems/choice_" + std::to_string(choice.first) + ".json", log);
+		}
 	}
 
-	jsbuf["completion_problems"].get_to(_list);
-	for (const auto& completion : _list)
+	if (jsbuf.contains("completion_problems") && jsbuf["completion_problems"].is_array())
 	{
-		completion_problems.push_back(std::make_pair(problem_completion(), completion.second));
-		completion_problems.back().first.load("data/problems/completion_" + std::to_string(completion.first) + ".json", log);
+		_list.clear();
+		jsbuf["completion_problems"].get_to(_list);
+		for (const auto& completion : _list)
+		{
+			completion_problems.push_back(std::make_pair(problem_completion(), completion.second));
+			completion_problems.back().first.load("data/problems/completion_" + std::to_string(completion.first) + ".json", log);
+		}
 	}
 
-	jsbuf["info_problems"].get_to(_list);
-	for (const auto& info : _list)
+	if (jsbuf.contains("info_problems") && jsbuf["info_problems"].is_array())
 	{
-		info_problems.push_back(std::make_pair(problem_info(), info.second));
-		info_problems.back().first.load("data/problems/info_" + std::to_string(info.first) + ".json", log);
+		_list.clear();
+		jsbuf["info_problems"].get_to(_list);
+		for (const auto& info : _list)
+		{
+			info_problems.push_back(std::make_pair(problem_info(), info.second));
+			info_problems.back().first.load("data/problems/info_" + std::to_string(info.first) + ".json", log);
+		}
 	}
 }
 void problem_list::save(std::string filename)
@@ -513,7 +559,190 @@ void responder_problem_output_handler::output_to_folder(std::string output_folde
 	}
 	jsbuf["info_problems"] = _list;
 
-	std::ofstream fout(output_folder + "problem_list.json");
-	fout << jsbuf.dump();
-	fout.close();
+	write_problem_json(output_folder + "problem_list.json", jsbuf);
+}
+
+namespace
+{
+	std::string strip_trailing_separators(std::string p)
+	{
+		while (p.size() > 1 && (p.back() == '/' || p.back() == '\\'))
+		{
+			if (p.size() == 3 && p[1] == ':')
+				break;
+			p.pop_back();
+		}
+		return p;
+	}
+
+	std::filesystem::path utf8_to_fs_path(const std::string& utf8)
+	{
+		if (utf8.empty())
+			return std::filesystem::path();
+		int wide_len = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+		if (wide_len <= 0)
+			return std::filesystem::path(utf8);
+		std::wstring wide(static_cast<size_t>(wide_len), L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), wide_len);
+		return std::filesystem::path(std::move(wide));
+	}
+}
+
+bool backup_problem_bank(const std::string& src_dir, const std::string& dst_dir, std::ostream& log)
+{
+	namespace fs = std::filesystem;
+	std::error_code ec;
+
+	const fs::path src = utf8_to_fs_path(strip_trailing_separators(src_dir));
+	const fs::path dst = utf8_to_fs_path(strip_trailing_separators(dst_dir));
+	if (src.empty() || dst.empty())
+	{
+		log << "Backup failed: invalid directory path." << std::endl;
+		return false;
+	}
+
+	if (!fs::exists(src, ec) || !fs::is_directory(src, ec))
+	{
+		log << "Backup failed: source directory does not exist: " << src_dir << std::endl;
+		return false;
+	}
+
+	const fs::path parent = dst.parent_path();
+	const std::wstring base_name = dst.filename().wstring();
+	const fs::path tmp = parent.empty() ? fs::path(base_name + L"_tmp") : (parent / (base_name + L"_tmp"));
+	const fs::path old = parent.empty() ? fs::path(base_name + L"_old") : (parent / (base_name + L"_old"));
+
+	fs::remove_all(tmp, ec);
+	ec.clear();
+
+	if (!parent.empty())
+	{
+		fs::create_directories(parent, ec);
+		if (ec)
+		{
+			log << "Backup failed: cannot create parent directory: " << ec.message() << std::endl;
+			return false;
+		}
+	}
+
+	fs::create_directories(tmp, ec);
+	if (ec)
+	{
+		log << "Backup failed: cannot create temporary directory: " << ec.message() << std::endl;
+		return false;
+	}
+
+	size_t src_file_count = 0;
+	size_t copied_file_count = 0;
+	for (fs::recursive_directory_iterator it(src, ec), end; it != end; it.increment(ec))
+	{
+		if (ec)
+		{
+			log << "Backup failed while enumerating source directory: " << ec.message() << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+		fs::path rel = fs::relative(it->path(), src, ec);
+		if (ec)
+		{
+			log << "Backup failed computing relative path: " << ec.message() << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+		fs::path target = tmp / rel;
+		if (it->is_directory(ec))
+		{
+			fs::create_directories(target, ec);
+			if (ec)
+			{
+				log << "Backup failed creating subdirectory: " << ec.message() << std::endl;
+				fs::remove_all(tmp, ec);
+				return false;
+			}
+		}
+		else if (it->is_regular_file(ec))
+		{
+			++src_file_count;
+			if (!fs::copy_file(it->path(), target, fs::copy_options::overwrite_existing, ec) || ec)
+			{
+				log << "Backup failed copying file (" << ec.message() << ")" << std::endl;
+				fs::remove_all(tmp, ec);
+				return false;
+			}
+			++copied_file_count;
+		}
+	}
+
+	// Verify file count inside temporary backup directory
+	size_t verified_file_count = 0;
+	for (fs::recursive_directory_iterator it(tmp, ec), end; it != end; it.increment(ec))
+	{
+		if (ec)
+		{
+			log << "Backup verification failed: " << ec.message() << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+		if (it->is_regular_file(ec))
+			++verified_file_count;
+	}
+
+	if (copied_file_count != src_file_count || verified_file_count != src_file_count)
+	{
+		log << "Backup verification failed: file count mismatch (src=" << src_file_count
+			<< ", copied=" << copied_file_count << ", verified=" << verified_file_count << ")" << std::endl;
+		fs::remove_all(tmp, ec);
+		return false;
+	}
+
+	const fs::path src_index = src / "problem_list.json";
+	if (fs::exists(src_index, ec))
+	{
+		const fs::path tmp_index = tmp / "problem_list.json";
+		std::ifstream idx_in(tmp_index);
+		if (idx_in.fail())
+		{
+			log << "Backup verification failed: missing problem_list.json in backup." << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+		json parsed = json::parse(idx_in, nullptr, false);
+		idx_in.close();
+		if (!parsed.is_object())
+		{
+			log << "Backup verification failed: invalid problem_list.json in backup." << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+	}
+
+	fs::remove_all(old, ec);
+	ec.clear();
+
+	bool moved_old = false;
+	if (fs::exists(dst, ec))
+	{
+		if (!MoveFileExW(dst.c_str(), old.c_str(), 0))
+		{
+			log << "Backup failed: cannot move previous backup aside (err=" << GetLastError() << ")" << std::endl;
+			fs::remove_all(tmp, ec);
+			return false;
+		}
+		moved_old = true;
+	}
+
+	if (!MoveFileExW(tmp.c_str(), dst.c_str(), 0))
+	{
+		DWORD err = GetLastError();
+		if (moved_old)
+			MoveFileExW(old.c_str(), dst.c_str(), 0);
+		fs::remove_all(tmp, ec);
+		log << "Backup failed: cannot promote temporary backup (err=" << err << ")" << std::endl;
+		return false;
+	}
+
+	if (moved_old)
+		fs::remove_all(old, ec);
+
+	return true;
 }

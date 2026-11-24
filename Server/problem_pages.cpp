@@ -86,13 +86,11 @@ namespace
 		pl_unused.remove_used();
 	}
 
-	// 把题库目录备份到 data/problems_backup/（覆盖旧备份）
-	void backup_problems()
+	// 把题库目录原子备份到 data/problems_backup/（保留旧备份直到新备份校验完成）
+	void backup_problems(std::ostream& log)
 	{
-		RemoveDir(BACKUP_DIR);
-		CreateDirectoryA("data", NULL);
-		CreateDirectoryA(BACKUP_DIR, NULL);
-		CopyDir(PROBLEM_DIR, BACKUP_DIR);
+		if (!backup_problem_bank(PROBLEM_DIR, BACKUP_DIR, log))
+			throw std::runtime_error("备份题库失败，已保留原有备份。");
 	}
 }
 
@@ -281,7 +279,7 @@ void problem_manage_handler::generate_page(const request_context& ctx, page_cont
 					<< " ===" << std::endl;
 				log << "上传文件：" << uploaded_filename << std::endl;
 
-				backup_problems();
+				backup_problems(log);
 				log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 
 				if (action == "convert")
@@ -300,7 +298,7 @@ void problem_manage_handler::generate_page(const request_context& ctx, page_cont
 		{
 			log << "=== 操作：去除重复题并重排 ID ===" << std::endl;
 
-			backup_problems();
+			backup_problems(log);
 			log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 
 			responder_problem_output_handler handler;
@@ -322,7 +320,7 @@ void problem_manage_handler::generate_page(const request_context& ctx, page_cont
 		else if (action == "backup")
 		{
 			log << "=== 操作：备份当前题库 ===" << std::endl;
-			backup_problems();
+			backup_problems(log);
 			log << "已将当前题库备份到 " << BACKUP_DIR << std::endl;
 			result_title = "备份完成";
 			result_summary = std::string("当前题库已备份到 ") + BACKUP_DIR + "。";

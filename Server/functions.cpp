@@ -12,8 +12,10 @@
 
 bool RemoveDir(const char* szFileDir)
 {
+	if (!szFileDir || szFileDir[0] == '\0')
+		return false;
 	std::string strDir = szFileDir;
-	if (strDir.at(strDir.length() - 1) != '\\')
+	if (strDir.back() != '\\' && strDir.back() != '/')
 		strDir += '\\';
 	WIN32_FIND_DATAA wfd;
 	HANDLE hFind = FindFirstFileA((strDir + "*.*").c_str(), &wfd);
@@ -29,12 +31,11 @@ bool RemoveDir(const char* szFileDir)
 		}
 		else
 		{
-			remove((strDir + wfd.cFileName).c_str());
+			DeleteFileA((strDir + wfd.cFileName).c_str());
 		}
 	} while (FindNextFileA(hFind, &wfd));
 	FindClose(hFind);
-	RemoveDirectoryA(szFileDir);
-	return true;
+	return RemoveDirectoryA(szFileDir) != 0;
 }
 
 void CopyDir(const char* szSrcDir, const char* szDstDir)

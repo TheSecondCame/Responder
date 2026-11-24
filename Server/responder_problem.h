@@ -102,5 +102,9 @@ public:
 	void output_to_folder(std::string output_folder);
 };
 
+// Atomically back up src_dir to dst_dir via a same-volume temporary directory.
+// Keeps any existing dst_dir intact if copying or verification fails.
+bool backup_problem_bank(const std::string& src_dir, const std::string& dst_dir, std::ostream& log = std::cout);
+
 #endif // RESPONDER_PROBLEM_H
 
